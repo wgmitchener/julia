@@ -9,7 +9,7 @@ debug release:
 	@$(MAKE) -s sys.ji
 
 julia-debug julia-release:
-	@$(MAKE) -sC external
+	@$(MAKE) -sC deps
 	@$(MAKE) $(jPARALLEL_BUILD_JOBS) -sC src lib$@
 	@$(MAKE) $(jPARALLEL_BUILD_JOBS) -sC base
 	@$(MAKE) $(jPARALLEL_BUILD_JOBS) -sC ui $@

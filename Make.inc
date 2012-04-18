@@ -4,7 +4,7 @@ JULIA_VERSION = $(shell cat $(JULIAHOME)/VERSION)
 JULIA_COMMIT = $(shell git rev-parse --short=10 HEAD)
 
 JULIALIB = $(JULIAHOME)/lib
-EXTROOT = $(JULIAHOME)/external/root
+EXTROOT = $(JULIAHOME)/deps/root
 EXTROOTLIB = $(EXTROOT)/lib
 LLVMROOT = $(EXTROOT)
 
@@ -113,7 +113,7 @@ else
 LIBBLAS = -lblas
 endif
 else
-LIBBLAS = $(JULIAHOME)/external/openblas-$(OPENBLAS_VER)/libopenblas.a
+LIBBLAS = $(JULIAHOME)/deps/openblas-$(OPENBLAS_VER)/libopenblas.a
 endif
 
 ifeq ($(USE_SYSTEM_LAPACK), 1)
@@ -123,7 +123,7 @@ else
 LIBLAPACK = -llapack
 endif
 else
-LIBLAPACK = $(JULIAHOME)/external/lapack-$(LAPACK_VER)/liblapack.a
+LIBLAPACK = $(JULIAHOME)/deps/lapack-$(LAPACK_VER)/liblapack.a
 endif
 
 # OS specific stuff
