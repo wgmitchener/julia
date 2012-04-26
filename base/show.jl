@@ -5,8 +5,8 @@ show(x) = ccall(:jl_show_any, Void, (Any,), x)
 
 print(x) = show(x)
 showcompact(x) = show(x)
-show_to_string(x) = print_to_string(show, x)
-showcompact_to_string(x) = print_to_string(showcompact, x)
+show_to_string(x) = sprint(show, x)
+showcompact_to_string(x) = sprint(showcompact, x)
 
 show(s::Symbol) = print(s)
 show(tn::TypeName) = show(tn.name)

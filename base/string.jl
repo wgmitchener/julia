@@ -16,7 +16,7 @@ ref(s::String, x::Real) = s[iround(x)]
 ref{T<:Integer}(s::String, r::Range1{T}) = s[int(first(r)):int(last(r))]
 # TODO: handle other ranges with stride ±1 specially?
 ref(s::String, v::AbstractVector) =
-    print_to_string(length(v), @thunk for i in v print(s[i]) end)
+    sprint(length(v), @thunk for i in v print(s[i]) end)
 
 symbol(s::String) = symbol(cstring(s))
 string(s::String) = s
@@ -430,8 +430,8 @@ end
 
 ## conversion of general objects to strings ##
 
-string(x) = print_to_string(show, x)
-cstring(x...) = print_to_string(print, x...)
+string(x) = sprint(show, x)
+cstring(x...) = sprint(print, x...)
 
 function cstring(p::Ptr{Uint8})
     p == C_NULL ? error("cannot convert NULL to string") :
@@ -481,10 +481,10 @@ function print_escaped(s::String, esc::String)
     end
 end
 
-escape_string(s::String) = print_to_string(length(s), print_escaped, s, "\"")
+escape_string(s::String) = sprint(length(s), print_escaped, s, "\"")
 print_quoted(s::String) = (print('"'); print_escaped(s, "\"\$"); print('"'))
 #"  # work around syntax highlighting problem
-quote_string(s::String) = print_to_string(length(s)+2, print_quoted, s)
+quote_string(s::String) = sprint(length(s)+2, print_quoted, s)
 
 # bare minimum unescaping function unescapes only given characters
 
@@ -503,7 +503,7 @@ function print_unescaped_chars(s::String, esc::String)
 end
 
 unescape_chars(s::String, esc::String) =
-    print_to_string(length(s), print_unescaped_chars, s, esc)
+    sprint(length(s), print_unescaped_chars, s, esc)
 
 # general unescaping of traditional C and Unicode escape sequences
 
@@ -560,7 +560,7 @@ function print_unescaped(s::String)
     end
 end
 
-unescape_string(s::String) = print_to_string(length(s), print_unescaped, s)
+unescape_string(s::String) = sprint(length(s), print_unescaped, s)
 
 ## checking UTF-8 & ACSII validity ##
 
@@ -609,7 +609,7 @@ function _jl_interp_parse(s::String, unescape::Function, printer::Function)
         push(sx, unescape(s[i:j-1]))
     end
     length(sx) == 1 && isa(sx[1],ByteString) ? sx[1] :
-        expr(:call, :print_to_string, printer, sx...)
+        expr(:call, :sprint, printer, sx...)
 end
 
 _jl_interp_parse(s::String, u::Function) = _jl_interp_parse(s, u, print)
@@ -771,7 +771,7 @@ function print_shell_escaped(cmd::String, args::String...)
 end
 
 shell_escape(cmd::String, args::String...) =
-    print_to_string(print_shell_escaped, cmd, args...)
+    sprint(print_shell_escaped, cmd, args...)
 
 ## interface to parser ##
 
@@ -871,7 +871,7 @@ function replace(str::ByteString, splitter, repl::Function, limit::Integer)
         n += 1
     end
     rstr = RopeString(rstr,SubString(str,i))
-    print_to_string(length(rstr),print,rstr)
+    sprint(length(rstr),print,rstr)
 end
 replace(s::String, spl, f::Function, n::Integer) = replace(cstring(s), spl, f, n)
 replace(s::String, spl, r, n::Integer) = replace(s, spl, x->r, n)
@@ -903,7 +903,7 @@ function print_joined(strings, delim)
 end
 print_joined(strings) = print_joined(strings, "")
 
-join(args...) = print_to_string(print_joined, args...)
+join(args...) = sprint(print_joined, args...)
 
 chop(s::String) = s[1:thisind(s,length(s))-1]
 chomp(s::String) = (i=thisind(s,length(s)); i>0 && s[i]=='\n' ? s[1:i-1] : s)

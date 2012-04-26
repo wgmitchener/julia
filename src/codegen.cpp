@@ -519,8 +519,8 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
                 /*
                   if (trace) {
                       ios_printf(ios_stdout, "call %s%s\n",
-                      jl_print_to_string(args[0]),
-                      jl_print_to_string((jl_value_t*)aty));
+                      jl_sprint(args[0]),
+                      jl_sprint((jl_value_t*)aty));
                   }
                 */
                 f = jl_get_specialization(f, aty);

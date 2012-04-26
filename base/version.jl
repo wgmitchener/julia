@@ -132,7 +132,7 @@ end
 
 const VERSION = convert(VersionNumber,chomp(readall(open("$JULIA_HOME/VERSION"))))
 try
-    ver = print_to_string(print,VERSION)
+    ver = sprint(print,VERSION)
     commit = chomp(readall(`git rev-parse HEAD`))
     tagged = try chomp(readall(`git rev-parse --verify --quiet v$ver`))
              catch "doesn't reference a commit"; end

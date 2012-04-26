@@ -115,20 +115,20 @@ takebuf_array(s::IOStream) =
 takebuf_string(s::IOStream) =
     ccall(:jl_takebuf_string, ByteString, (Ptr{Void},), s.ios)
 
-function print_to_array(size::Integer, f::Function, args...)
+function aprint(size::Integer, f::Function, args...)
     s = memio(size, false)
     _jl_with_output_stream(s, f, args...)
     takebuf_array(s)
 end
 
-function print_to_string(size::Integer, f::Function, args...)
+function sprint(size::Integer, f::Function, args...)
     s = memio(size, false)
     _jl_with_output_stream(s, f, args...)
     takebuf_string(s)
 end
 
-print_to_array(f::Function, args...) = print_to_array(0, f, args...)
-print_to_string(f::Function, args...) = print_to_string(0, f, args...)
+aprint(f::Function, args...) = aprint(0, f, args...)
+sprint(f::Function, args...) = sprint(0, f, args...)
 
 nthbyte(x::Integer, n::Integer) = (n > sizeof(x) ? uint8(0) : uint8((x>>>((n-1)<<3))))
 
