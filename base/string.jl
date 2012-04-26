@@ -854,17 +854,20 @@ split(s::String, spl)             = split(s, spl, 0, true)
 # a bit oddball, but standard behavior in Perl, Ruby & Python:
 split(str::String) = split(str, [' ','\t','\n','\v','\f','\r'], 0, false)
 
-function replace(str::ByteString, pattern, repl::Function, limit::Integer)
+function replace(str::ByteString, splitter, repl::Function, limit::Integer)
     n = 1
     rstr = ""
-    i = start(str)
-    for (j,k) in each_search(str,pattern)
-        rstr = RopeString(rstr,SubString(str,i,j-1))
-        rstr = RopeString(rstr,string(repl(SubString(str,j,k-1))))
-        i = k
-        if n == limit
-            break
+    i = a = start(str)
+    j, k = search(str,splitter,i)
+    while j != 0
+        if i == a || i < k
+            rstr = RopeString(rstr,SubString(str,i,j-1))
+            rstr = RopeString(rstr,string(repl(SubString(str,j,k-1))))
+            i = k
         end
+        if k <= j; k = nextind(str,j) end
+        j, k = search(str,splitter,k)
+        if n == limit break end
         n += 1
     end
     rstr = RopeString(rstr,SubString(str,i))
