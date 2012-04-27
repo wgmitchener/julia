@@ -75,8 +75,6 @@ function open(fname::String, mode::String)
     error("invalid open mode: ", mode)
 end
 
-current_output_stream() = (OUTPUT_STREAM::IOStream)
-
 function memio(x::Integer, finalize::Bool)
     s = IOStream("<memio>", finalize)
     ccall(:jl_ios_mem, Ptr{Void}, (Ptr{Uint8}, Uint), s.ios, x)
@@ -102,7 +100,7 @@ sprint(f::Function, args...) = sprint(0, f, args...)
 
 nthbyte(x::Integer, n::Integer) = (n > sizeof(x) ? uint8(0) : uint8((x>>>((n-1)<<3))))
 
-write(x) = write(current_output_stream(), x)
+write(x) = write(stdout_stream, x)
 write(s, x::Uint8) = error(typeof(s)," does not support byte I/O")
 
 function write(s, x::Integer)
