@@ -46,7 +46,7 @@ make_stdin_stream() = fdio("<stdin>", ccall(:jl_stdin, Int32, ()))
 make_stderr_stream() = fdio("<stderr>", ccall(:jl_stderr, Int32, ()))
 make_stdout_stream() = IOStream("<stdout>", ccall(:jl_stdout_stream, Any, ()))
 
-show(s::IOStream) = print("IOStream(",s.name,")")
+fshow(io, s::IOStream) = fprint(io, "IOStream(", s.name, ")")
 
 fd(s::IOStream) = ccall(:jl_ios_fd, Int, (Ptr{Void},), s.ios)
 close(s::IOStream) = ccall(:ios_close, Void, (Ptr{Void},), s.ios)

@@ -40,22 +40,22 @@ VersionNumber(x::Integer, y::Integer, z::Integer) = VersionNumber(x, y, z, [], [
 VersionNumber(x::Integer, y::Integer)             = VersionNumber(x, y, 0, [], [])
 VersionNumber(x::Integer)                         = VersionNumber(x, 0, 0, [], [])
 
-function print(v::VersionNumber)
-    print(v.major)
-    print('.')
-    print(v.minor)
-    print('.')
-    print(v.patch)
+function fprint(io, v::VersionNumber)
+    fprint(io, v.major)
+    fprint(io, '.')
+    fprint(io, v.minor)
+    fprint(io, '.')
+    fprint(io, v.patch)
     if !isempty(v.prerelease)
-        print('-')
-        print_joined(v.prerelease,'.')
+        fprint(io, '-')
+        fprint_joined(io, v.prerelease,'.')
     end
     if !isempty(v.build)
-        print('+')
-        print_joined(v.build,'.')
+        fprint(io, '+')
+        fprint_joined(io, v.build,'.')
     end
 end
-show(v::VersionNumber) = print("v\"",v,"\"")
+fshow(io, v::VersionNumber) = fprint(io, "v\"",v,"\"")
 
 convert(::Type{VersionNumber}, v::Integer) = VersionNumber(v)
 convert(::Type{VersionNumber}, v::Tuple) = VersionNumber(v...)

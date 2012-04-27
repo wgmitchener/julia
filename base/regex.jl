@@ -38,21 +38,21 @@ macro r_str(pattern, flags...)
     Regex(pattern, options)
 end
 
-function show(re::Regex)
+function fshow(io, re::Regex)
     imsx = PCRE_CASELESS|PCRE_MULTILINE|PCRE_DOTALL|PCRE_EXTENDED
     if (re.options & ~imsx) == PCRE_UTF8
-        print('r')
-        print_quoted_literal(re.pattern)
-        if (re.options & PCRE_CASELESS ) != 0; print('i'); end
-        if (re.options & PCRE_MULTILINE) != 0; print('m'); end
-        if (re.options & PCRE_DOTALL   ) != 0; print('s'); end
-        if (re.options & PCRE_EXTENDED ) != 0; print('x'); end
+        fprint(io, 'r')
+        fprint_quoted_literal(io, re.pattern)
+        if (re.options & PCRE_CASELESS ) != 0; fprint(io, 'i'); end
+        if (re.options & PCRE_MULTILINE) != 0; fprint(io, 'm'); end
+        if (re.options & PCRE_DOTALL   ) != 0; fprint(io, 's'); end
+        if (re.options & PCRE_EXTENDED ) != 0; fprint(io, 'x'); end
     else
-        print("Regex(")
-        show(re.pattern)
-        print(',')
-        show(re.options)
-        print(')')
+        fprint(io, "Regex(")
+        fshow(io, re.pattern)
+        fprint(io, ',')
+        fshow(io, re.options)
+        fprint(io, ')')
     end
 end
 
@@ -66,20 +66,20 @@ type RegexMatch
     offsets::Vector{Int}
 end
 
-function show(m::RegexMatch)
-    print("RegexMatch(")
-    show(m.match)
+function fshow(io, m::RegexMatch)
+    fprint(io, "RegexMatch(")
+    fshow(io, m.match)
     if !isempty(m.captures)
-        print(", ")
+        fprint(io, ", ")
         for i = 1:length(m.captures)
-            print(i, "=")
-            show(m.captures[i])
+            fprint(io, i, "=")
+            fshow(io, m.captures[i])
             if i < length(m.captures)
-                print(", ")
+                fprint(io, ", ")
             end
         end
     end
-    print(")")
+    fprint(io, ")")
 end
 
 matches(r::Regex, s::String, o::Integer) =

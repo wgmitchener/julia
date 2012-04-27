@@ -21,16 +21,15 @@ ref(s::String, v::AbstractVector) =
 symbol(s::String) = symbol(cstring(s))
 string(s::String) = s
 
-print(x...) = for i in x print(i) end
-fprint(f,s::String) = for c in s fprint(f,c) end
-println(args...) = print(args..., '\n')
-fprintln(f,args...) = fprint(f, args..., '\n')
+fprint(io, xs...) = for x in xs fprint(io, x) end
+fprint(io, s::String) = for c in s fprint(io, c) end
+fprintln(io, args...) = fprint(io, args..., '\n')
+fprintln(io, args...) = fprint(io, args..., '\n')
 
-show(f,s::String) = print_quoted(f,s)
+fshow(io, s::String) = fprint_quoted(io, s)
 
 (*)(s::String...) = strcat(s...)
 (^)(s::String, r::Integer) = repeat(s,r)
-
 
 size(s::String) = (length(s),)
 size(s::String, d::Integer) = d==1 ? length(s) :
@@ -386,7 +385,7 @@ strcat(x...) = strcat(map(string,x)...)
 strcat(s::String, t::String...) =
     (t = strcat(t...); isempty(s) ? t : isempty(t) ? s : RopeString(s, t))
 
-print(s::RopeString) = print(s.head, s.tail)
+fprint(io, s::RopeString) = fprint(io, s.head, s.tail)
 
 ## transformed strings ##
 
@@ -450,10 +449,10 @@ promote_rule(::Type{ASCIIString}, ::Type{CharString} ) = UTF8String
 
 # TODO: this is really the inverse of print_unbackslashed
 
-function print_quoted_literal(s::String)
-    print('"')
-    for c = s; c == '"' ? print("\\\"") : print(c); end
-    print('"')
+function fprint_quoted_literal(io, s::String)
+    fprint(io, '"')
+    for c = s; c == '"' ? fprint(io, "\\\"") : fprint(io, c); end
+    fprint(io, '"')
 end
 
 ## string escaping & unescaping ##
@@ -464,31 +463,34 @@ escape_nul(s::String, i::Int) =
 is_hex_digit(c::Char) = '0'<=c<='9' || 'a'<=c<='f' || 'A'<=c<='F'
 need_full_hex(s::String, i::Int) = !done(s,i) && is_hex_digit(next(s,i)[1])
 
-function print_escaped(s::String, esc::String)
+function fprint_escaped(io, s::String, esc::String)
     i = start(s)
     while !done(s,i)
         c, j = next(s,i)
-        c == '\0'       ? print(escape_nul(s,j)) :
-        c == '\e'       ? print(L"\e") :
-        c == '\\'       ? print("\\\\") :
-        contains(esc,c) ? print('\\', c) :
-        iswprint(c)     ? print(c) :
-        7 <= c <= 13    ? print('\\', "abtnvfr"[c-6]) :
-        c <= '\x7f'     ? print(L"\x", hex(c, 2)) :
-        c <= '\uffff'   ? print(L"\u", hex(c, need_full_hex(s,j) ? 4 : 2)) :
-                          print(L"\U", hex(c, need_full_hex(s,j) ? 8 : 4))
+        c == '\0'       ? fprint(io, escape_nul(s,j)) :
+        c == '\e'       ? fprint(io, L"\e") :
+        c == '\\'       ? fprint(io, "\\\\") :
+        contains(esc,c) ? fprint(io, '\\', c) :
+        iswprint(c)     ? fprint(io, c) :
+        7 <= c <= 13    ? fprint(io, '\\', "abtnvfr"[c-6]) :
+        c <= '\x7f'     ? fprint(io, L"\x", hex(c, 2)) :
+        c <= '\uffff'   ? fprint(io, L"\u", hex(c, need_full_hex(s,j) ? 4 : 2)) :
+                          fprint(io, L"\U", hex(c, need_full_hex(s,j) ? 8 : 4))
         i = j
     end
 end
 
 escape_string(s::String) = sprint(length(s), print_escaped, s, "\"")
-print_quoted(s::String) = (print('"'); print_escaped(s, "\"\$"); print('"'))
-#"  # work around syntax highlighting problem
-quote_string(s::String) = sprint(length(s)+2, print_quoted, s)
+function fprint_quoted(io, s::String)
+    fprint(io, '"')
+    fprint_escaped(io, s, "\"\$") #"# work around syntax highlighting problem
+    fprint(io, '"')
+end
+quote_string(s::String) = sprint(length(s)+2, io->fprint_quoted(s))
 
 # bare minimum unescaping function unescapes only given characters
 
-function print_unescaped_chars(s::String, esc::String)
+function fprint_unescaped_chars(io, s::String, esc::String)
     if !contains(esc,'\\')
         esc = strcat("\\", esc)
     end
@@ -498,7 +500,7 @@ function print_unescaped_chars(s::String, esc::String)
         if c == '\\' && !done(s,i) && contains(esc,s[i])
             c, i = next(s,i)
         end
-        print(c)
+        fprint(io, c)
     end
 end
 
@@ -507,7 +509,7 @@ unescape_chars(s::String, esc::String) =
 
 # general unescaping of traditional C and Unicode escape sequences
 
-function print_unescaped(s::String)
+function fprint_unescaped(io, s::String)
     i = start(s)
     while !done(s,i)
         c, i = next(s,i)
@@ -530,7 +532,7 @@ function print_unescaped(s::String)
                 if m == 2 # \x escape sequence
                     write(uint8(n))
                 else
-                    print(char(n))
+                    fprint(io, char(n))
                 end
             elseif '0' <= c <= '7'
                 k = 1
@@ -545,17 +547,17 @@ function print_unescaped(s::String)
                 end
                 write(uint8(n))
             else
-                print(c == 'a' ? '\a' :
-                      c == 'b' ? '\b' :
-                      c == 't' ? '\t' :
-                      c == 'n' ? '\n' :
-                      c == 'v' ? '\v' :
-                      c == 'f' ? '\f' :
-                      c == 'r' ? '\r' :
-                      c == 'e' ? '\e' : c)
+                fprint(io, c == 'a' ? '\a' :
+                           c == 'b' ? '\b' :
+                           c == 't' ? '\t' :
+                           c == 'n' ? '\n' :
+                           c == 'v' ? '\v' :
+                           c == 'f' ? '\f' :
+                           c == 'r' ? '\r' :
+                           c == 'e' ? '\e' : c)
             end
         else
-            print(c)
+            fprint(io, c)
         end
     end
 end
@@ -732,9 +734,9 @@ function shell_split(s::String)
     args
 end
 
-function print_shell_word(word::String)
+function fprint_shell_word(io, word::String)
     if isempty(word)
-        print("''")
+        fprint(io, "''")
     end
     has_single = false
     has_special = false
@@ -747,26 +749,26 @@ function print_shell_word(word::String)
         end
     end
     if !has_special
-        print(word)
+        fprint(io, word)
     elseif !has_single
-        print('\'', word, '\'')
+        fprint(io, '\'', word, '\'')
     else
-        print('"')
+        fprint(io, '"')
         for c in word
             if c == '"' || c == '$'
-                print('\\')
+                fprint(io, '\\')
             end
-            print(c)
+            fprint(io, c)
         end
-        print('"')
+        fprint(io, '"')
     end
 end
 
-function print_shell_escaped(cmd::String, args::String...)
-    print_shell_word(cmd)
+function fprint_shell_escaped(io, cmd::String, args::String...)
+    fprint_shell_word(io, cmd)
     for arg in args
-        print(' ')
-        print_shell_word(arg)
+        fprint(io, ' ')
+        fprint_shell_word(io, arg)
     end
 end
 
@@ -877,31 +879,31 @@ replace(s::String, spl, f::Function, n::Integer) = replace(cstring(s), spl, f, n
 replace(s::String, spl, r, n::Integer) = replace(s, spl, x->r, n)
 replace(s::String, spl, r) = replace(s, spl, r, 0)
 
-function print_joined(strings, delim, last)
+function fprint_joined(io, strings, delim, last)
     i = start(strings)
     if done(strings,i)
         return
     end
     str, i = next(strings,i)
-    print(str)
+    fprint(io, str)
     while !done(strings,i)
         str, i = next(strings,i)
-        print(done(strings,i) ? last : delim)
-        print(str)
+        fprint(io, done(strings,i) ? last : delim)
+        fprint(io, str)
     end
 end
 
-function print_joined(strings, delim)
+function fprint_joined(io, strings, delim)
     i = start(strings)
     while !done(strings,i)
         str, i = next(strings,i)
-        print(str)
+        fprint(io, str)
         if !done(strings,i)
-            print(delim)
+            fprint(io, delim)
         end
     end
 end
-print_joined(strings) = print_joined(strings, "")
+fprint_joined(io, strings) = fprint_joined(io, strings, "")
 
 join(args...) = sprint(print_joined, args...)
 
@@ -944,7 +946,7 @@ function parse_int{T<:Integer}(::Type{T}, s::String, base::Integer)
     while true
         if done(s,i)
             throw(ArgumentError(strcat(
-                "premature end of integer (in ",show_to_string(s),")"
+                "premature end of integer (in ", sprint(show, s) ,")"
             )))
         end
         c,i = next(s,i)
@@ -957,14 +959,14 @@ function parse_int{T<:Integer}(::Type{T}, s::String, base::Integer)
         sgn = -sgn
         if done(s,i)
             throw(ArgumentError(strcat(
-                "premature end of integer (in ", show_to_string(s), ")"
+                "premature end of integer (in ", sprint(show, s), ")"
             )))
         end
         c,i = next(s,i)
     elseif c == '+'
         if done(s,i)
             throw(ArgumentError(strcat(
-                "premature end of integer (in ", show_to_string(s), ")"
+                "premature end of integer (in ", sprint(show, s), ")"
             )))
         end
         c,i = next(s,i)
@@ -978,14 +980,14 @@ function parse_int{T<:Integer}(::Type{T}, s::String, base::Integer)
         if d >= base
             if !iswspace(c)
                 throw(ArgumentError(strcat(
-                    show_to_string(c), " is not a valid digit (in ", show_to_string(s), ")"
+                    sprint(show, c)," is not a valid digit (in ", sprint(show, s), ")"
                 )))
             end
             while !done(s,i)
                 c,i = next(s,i)
                 if !iswspace(c)
                     throw(ArgumentError(strcat(
-                        "extra characters after whitespace (in ", show_to_string(s), ")"
+                        "extra characters after whitespace (in ", sprint(show, s), ")"
                     )))
                 end
             end

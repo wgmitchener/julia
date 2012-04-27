@@ -89,8 +89,8 @@ ref(r::Range, s::Range1{Int}) =
 ref(r::Range1, s::Range1{Int}) =
     r.len < last(s) ? error(BoundsError) : Range1(r[s.start], s.len)
 
-show(r::Range)  = print(r.start,':',r.step,':',last(r))
-show(r::Range1) = print(r.start,':',last(r))
+fshow(io, r::Range)  = fprint(io, r.start,':',r.step,':',last(r))
+fshow(io, r::Range1) = fprint(io, r.start,':',last(r))
 
 start(r::Ranges) = 0
 next(r::Range,  i) = (r.start + oftype(r.start,i)*step(r), i+1)

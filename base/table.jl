@@ -24,20 +24,20 @@ end
 has(t::Associative, key) = !is(get(t, key, _jl_secret_table_token),
                                _jl_secret_table_token)
 
-function show(t::Associative)
+function fshow(io, t::Associative)
     if isempty(t)
-        print(typeof(t).name.name,"()")
+        fprint(io, typeof(t).name.name,"()")
     else
-        print("{")
+        fprint(io, "{")
         first = true
         for (k, v) = t
-            first || print(',')
+            first || fprint(io, ',')
             first = false
-            show(k)
-            print("=>")
-            show(v)
+            fshow(io, k)
+            fprint(io, "=>")
+            fshow(io, v)
         end
-        print("}")
+        fprint(io, "}")
     end
 end
 

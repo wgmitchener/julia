@@ -1,4 +1,4 @@
-show(t::Task) = print("Task")
+fshow(io, t::Task) = fprint(io, "Task")
 
 # task-local storage
 function tls()
