@@ -1,4 +1,7 @@
 # formerly built-in methods. can be replaced any time.
+
+show(x) = fshow(stdout_stream, x)
+
 fprint(io, a::Array{Uint8,1}) =
     ccall(:jl_print_array_uint8, Void, (Ptr{Void}, Any,), io, a)
 fprint(io, s::Symbol) = ccall(:jl_print_symbol, Void, (Ptr{Void}, Any,), io, s)
@@ -22,7 +25,7 @@ end
 fshow(io, n::Unsigned) = (fprint(io, "0x");
                        fshow_trailing_hex(io, uint64(n), sizeof(n)<<1))
 
-show{T}(io, p::Ptr{T}) =
+fshow{T}(io, p::Ptr{T}) =
     fprint(io, is(T,None) ? "Ptr{Void}" : typeof(p), " @0x$(hex(unsigned(p), WORD_SIZE>>2))")
 
 function fshow(io, l::LambdaStaticData)
@@ -201,7 +204,7 @@ function fshow(io, bt::BackTrace)
     end
 end
 
-function dump(x)
+function dump(io, x)
     T = typeof(x)
     if isa(x,Array)
         fprint(io, "Array($(eltype(x)),$(size(x)))")
@@ -218,7 +221,7 @@ function dump(x)
     end
 end
 
-function showall{T}(a::AbstractArray{T,1})
+function fshowall{T}(io, a::AbstractArray{T,1})
     if is(T,Any)
         opn = '{'; cls = '}'
     else
@@ -449,7 +452,7 @@ function whos()
     end
 end
 
-show{T}(x::AbstractArray{T,0}) = (fprintln(io, summary(x),":"); fshow(io, x[]))
+fshow{T}(io, x::AbstractArray{T,0}) = (fprintln(io, summary(x),":"); fshow(io, x[]))
 function fshow(io, X::AbstractArray)
     fprint(io, summary(X))
     if !isempty(X)

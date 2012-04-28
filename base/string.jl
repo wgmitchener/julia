@@ -1,8 +1,6 @@
 ## core text I/O ##
 
-show(x) = fshow(stdout_stream, x)
 fprint(io, x) = fshow(io, x)
-
 fprint(io, xs...) = for x in xs fprint(io, x) end
 fprintln(io, xs...) = fprint(io, xs..., '\n')
 
@@ -11,8 +9,8 @@ println(xs...) = fprintln(stdout_stream, xs...)
 
 ## core string functions ##
 
-length(s::String) = error("you must implement length(",typeof(s),")")
-next(s::String, i::Int) = error("you must implement next(",typeof(s),",Int)")
+length(s::String) = error("you must implement length(", typeof(s), ")")
+next(s::String, i::Int) = error("you must implement next(", typeof(s), ",Int)")
 next(s::DirectIndexString, i::Int) = (s[i],i+1)
 next(s::String, i::Integer) = next(s,int(i))
 
@@ -27,7 +25,7 @@ ref(s::String, x::Real) = s[iround(x)]
 ref{T<:Integer}(s::String, r::Range1{T}) = s[int(first(r)):int(last(r))]
 # TODO: handle other ranges with stride ±1 specially?
 ref(s::String, v::AbstractVector) =
-    sprint(length(v), f->(for i in v fprint(f,s[i]) end))
+    sprint(length(v), io->(for i in v fprint(io,s[i]) end))
 
 symbol(s::String) = symbol(cstring(s))
 string(s::String) = s
