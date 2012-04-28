@@ -9,7 +9,7 @@ if false
     fprint(io, s::ASCIIString) = fprint(io, s.data)
     fprint(io, x) = fshow(io, x)
     fprintln(io, x) = (fprint(io, x); fprint(io, "\n"))
-    fshow(io, x) = ccall(:jl_fshow_any, Void, (Ptr{Void}, Any,), io, x)
+    fshow(io, x) = ccall(:jl_fshow_any, Void, (Any, Any,), io, x)
     fshow(io, s::ASCIIString) = fprint(io, s.data)
     fshow(io, s::Symbol) = fprint(io, s)
     fshow(io, b::Bool) = fprint(io, b ? "true" : "false")

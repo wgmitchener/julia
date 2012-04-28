@@ -761,6 +761,16 @@ DLLEXPORT int jl_strtof(char *str, float *out)
 
 // showing --------------------------------------------------------------------
 
+jl_value_t *jl_stdout_obj()
+{
+    return jl_get_global(jl_base_module, jl_symbol("stdout_stream"));
+}
+
+jl_value_t *jl_stderr_obj()
+{
+    return jl_get_global(jl_base_module, jl_symbol("stderr_stream"));
+}
+
 static jl_function_t *jl_show_gf=NULL;
 
 void jl_show(jl_value_t *stream, jl_value_t *v)
@@ -775,12 +785,13 @@ void jl_show(jl_value_t *stream, jl_value_t *v)
 }
 
 // comma_one prints a comma for 1 element, e.g. "(x,)"
-void jl_show_tuple(ios_t *s, jl_tuple_t *t, char opn, char cls, int comma_one)
+void jl_show_tuple(jl_value_t *st, jl_tuple_t *t, char opn, char cls, int comma_one)
 {
+    ios_t *s = (ios_t*)jl_iostr_data(st);
     ios_putc(opn, s);
     size_t i, n=t->length;
     for(i=0; i < n; i++) {
-        jl_show(jl_tupleref(t, i));
+        jl_show(st, jl_tupleref(t, i));
         if ((i < n-1) || (n==1 && comma_one))
             ios_putc(',', s);
     }
@@ -797,8 +808,9 @@ static void show_function(ios_t *s, jl_value_t *v)
     }
 }
 
-static void show_type(ios_t *s, jl_value_t *t)
+static void show_type(jl_value_t *st, jl_value_t *t)
 {
+    ios_t *s = (ios_t*)jl_iostr_data(st);
     if (jl_is_union_type(t)) {
         if (t == (jl_value_t*)jl_bottom_type) {
             ios_write(s, "None", 4);
@@ -808,15 +820,15 @@ static void show_type(ios_t *s, jl_value_t *t)
         }
         else {
             ios_write(s, "Union", 5);
-            jl_show_tuple(((jl_uniontype_t*)t)->types, '(', ')', 0);
+            jl_show_tuple(st, ((jl_uniontype_t*)t)->types, '(', ')', 0);
         }
     }
     else if (jl_is_seq_type(t)) {
-        jl_show(jl_tparam0(t));
+        jl_show(st, jl_tparam0(t));
         ios_write(s, "...", 3);
     }
     else if (jl_is_typector(t)) {
-        jl_show((jl_value_t*)((jl_typector_t*)t)->body);
+        jl_show(st, (jl_value_t*)((jl_typector_t*)t)->body);
     }
     else {
         assert(jl_is_some_tag_type(t));
@@ -824,21 +836,22 @@ static void show_type(ios_t *s, jl_value_t *t)
         ios_puts(tt->name->name->name, s);
         jl_tuple_t *p = tt->parameters;
         if (p->length > 0)
-            jl_show_tuple(p, '{', '}', 0);
+            jl_show_tuple(st, p, '{', '}', 0);
     }
 }
 
-DLLEXPORT void jl_show_any(ios_t *s, jl_value_t *v)
+DLLEXPORT void jl_fshow_any(jl_value_t *str, jl_value_t *v)
 {
+    ios_t *s = (ios_t*)jl_iostr_data(str);
     // fallback for printing some other builtin types
     if (jl_is_tuple(v)) {
-        jl_show_tuple((jl_tuple_t*)v, '(', ')', 1);
+        jl_show_tuple(str, (jl_tuple_t*)v, '(', ')', 1);
     }
     else if (jl_is_type(v)) {
-        show_type(v);
+        show_type(str, v);
     }
     else if (jl_is_func(v)) {
-        show_function(v);
+        show_function(s, v);
     }
     else if (jl_typeis(v,jl_intrinsic_type)) {
         ios_printf(s, "#<intrinsic-function %d>", *(uint32_t*)jl_bits_data(v));
@@ -852,7 +865,7 @@ DLLEXPORT void jl_show_any(ios_t *s, jl_value_t *v)
             size_t i;
             size_t n = st->names->length;
             for(i=0; i < n; i++) {
-                jl_show(nth_field(v, i));
+                jl_show(str, nth_field(v, i));
                 if (i < n-1)
                     ios_putc(',', s);
             }

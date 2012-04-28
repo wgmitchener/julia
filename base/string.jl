@@ -1,3 +1,14 @@
+## core text I/O ##
+
+show(x) = fshow(stdout_stream, x)
+fprint(io, x) = fshow(io, x)
+
+fprint(io, xs...) = for x in xs fprint(io, x) end
+fprintln(io, xs...) = fprint(io, xs..., '\n')
+
+print(xs...) = fprint(stdout_stream, xs...)
+println(xs...) = fprintln(stdout_stream, xs...)
+
 ## core string functions ##
 
 length(s::String) = error("you must implement length(",typeof(s),")")
@@ -16,16 +27,12 @@ ref(s::String, x::Real) = s[iround(x)]
 ref{T<:Integer}(s::String, r::Range1{T}) = s[int(first(r)):int(last(r))]
 # TODO: handle other ranges with stride ±1 specially?
 ref(s::String, v::AbstractVector) =
-    sprint(length(v), f->(for i in v fprint(f,s[i])) end)
+    sprint(length(v), f->(for i in v fprint(f,s[i]) end))
 
 symbol(s::String) = symbol(cstring(s))
 string(s::String) = s
 
-fprint(io, xs...) = for x in xs fprint(io, x) end
 fprint(io, s::String) = for c in s fprint(io, c) end
-fprintln(io, args...) = fprint(io, args..., '\n')
-fprintln(io, args...) = fprint(io, args..., '\n')
-
 fshow(io, s::String) = fprint_quoted(io, s)
 
 (*)(s::String...) = strcat(s...)
@@ -614,7 +621,7 @@ function _jl_interp_parse(s::String, unescape::Function, printer::Function)
         expr(:call, :sprint, printer, sx...)
 end
 
-_jl_interp_parse(s::String, u::Function) = _jl_interp_parse(s, u, print)
+_jl_interp_parse(s::String, u::Function) = _jl_interp_parse(s, u, fprint)
 _jl_interp_parse(s::String) = _jl_interp_parse(s, x->check_utf8(unescape_string(x)))
 
 function _jl_interp_parse_bytes(s::String)

@@ -57,8 +57,7 @@ value_t fl_invoke_julia_macro(value_t *args, uint32_t nargs)
     }
     JL_CATCH {
         JL_GC_POP();
-        jl_show(jl_get_global(jl_core_module,jl_symbol("stderr_stream")),
-                jl_exception_in_transit);
+        jl_show(jl_stderr_obj(), jl_exception_in_transit);
         ios_putc('\n', ios_stderr);
         return fl_cons(symbol("error"), FL_NIL);
     }

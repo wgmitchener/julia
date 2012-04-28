@@ -1,12 +1,8 @@
-print(x) = fprint(stdout_stream, x)
-show(x) = fshow(stdout_stream, x)
-fprint(io, x) = fshow(io, x)
-
 # formerly built-in methods. can be replaced any time.
 fprint(io, a::Array{Uint8,1}) =
     ccall(:jl_print_array_uint8, Void, (Ptr{Void}, Any,), io, a)
 fprint(io, s::Symbol) = ccall(:jl_print_symbol, Void, (Ptr{Void}, Any,), io, s)
-fshow(io, x) = ccall(:jl_fshow_any, Void, (Ptr{Void}, Any,), io, x)
+fshow(io, x) = ccall(:jl_fshow_any, Void, (Any, Any,), io, x)
 
 fshowcompact(io, x) = fshow(io, x)
 showcompact(x) = fshowcompact(stdout_stream, x)

@@ -635,8 +635,7 @@ static void big_obj_stats(void);
 #ifdef OBJPROFILE
 static void print_obj_profile(void)
 {
-    jl_value_t *errstream = jl_get_global(jl_base_module,
-                                          jl_symbol("stderr_stream"));
+    jl_value_t *errstream = jl_stderr_obj();
     for(int i=0; i < obj_counts.size; i+=2) {
         if (obj_counts.table[i+1] != HT_NOTFOUND) {
             ios_printf(ios_stderr, "%d ", obj_counts.table[i+1]-1);

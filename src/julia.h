@@ -435,6 +435,7 @@ void *allocobj(size_t sz);
 #define jl_array_ndims(a) ((int32_t)(((jl_array_t*)a)->ndims))
 #define jl_cell_data(a)   ((jl_value_t**)((jl_array_t*)a)->data)
 #define jl_string_data(s) ((char*)((jl_array_t*)((jl_value_t**)(s))[1])->data)
+#define jl_iostr_data(s)  ((char*)((jl_array_t*)((jl_value_t**)(s))[1])->data)
 
 #define jl_gf_mtable(f) ((jl_methtable_t*)((jl_function_t*)(f))->env)
 #define jl_gf_name(f)   (jl_gf_mtable(f)->name)
@@ -690,7 +691,9 @@ jl_lambda_info_t *jl_wrap_expr(jl_value_t *expr);
 
 // some useful functions
 DLLEXPORT void jl_show(jl_value_t *stream, jl_value_t *v);
-void jl_show_tuple(ios_t *s, jl_tuple_t *t, char opn, char cls, int comma_one);
+void jl_show_tuple(jl_value_t *st, jl_tuple_t *t, char opn, char cls, int comma_one);
+jl_value_t *jl_stdout_obj();
+jl_value_t *jl_stderr_obj();
 
 // modules
 extern jl_module_t *jl_core_module;
