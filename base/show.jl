@@ -1,6 +1,7 @@
 # formerly built-in methods. can be replaced any time.
 
 show(x) = fshow(stdout_stream, x)
+show(io, x) = fshow(io, x)
 
 fprint(io, a::Array{Uint8,1}) =
     ccall(:jl_print_array_uint8, Void, (Ptr{Void}, Any,), io, a)

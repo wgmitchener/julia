@@ -435,7 +435,7 @@ end
 ## conversion of general objects to strings ##
 
 string(x) = sprint(show, x)
-cstring(x...) = sprint(print, x...)
+cstring(x...) = sprint(fprint, x...)
 
 function cstring(p::Ptr{Uint8})
     p == C_NULL ? error("cannot convert NULL to string") :
@@ -510,7 +510,7 @@ function fprint_unescaped_chars(io, s::String, esc::String)
 end
 
 unescape_chars(s::String, esc::String) =
-    sprint(length(s), print_unescaped_chars, s, esc)
+    sprint(length(s), fprint_unescaped_chars, s, esc)
 
 # general unescaping of traditional C and Unicode escape sequences
 
@@ -535,7 +535,7 @@ function fprint_unescaped(io, s::String)
                     error("\\x used with no following hex digits")
                 end
                 if m == 2 # \x escape sequence
-                    write(uint8(n))
+                    write(io, uint8(n))
                 else
                     fprint(io, char(n))
                 end
@@ -550,7 +550,7 @@ function fprint_unescaped(io, s::String)
                 if n > 255
                     error("octal escape sequence out of range")
                 end
-                write(uint8(n))
+                write(io, uint8(n))
             else
                 fprint(io, c == 'a' ? '\a' :
                            c == 'b' ? '\b' :
@@ -567,7 +567,7 @@ function fprint_unescaped(io, s::String)
     end
 end
 
-unescape_string(s::String) = sprint(length(s), print_unescaped, s)
+unescape_string(s::String) = sprint(length(s), fprint_unescaped, s)
 
 ## checking UTF-8 & ACSII validity ##
 
@@ -778,7 +778,7 @@ function fprint_shell_escaped(io, cmd::String, args::String...)
 end
 
 shell_escape(cmd::String, args::String...) =
-    sprint(print_shell_escaped, cmd, args...)
+    sprint(fprint_shell_escaped, cmd, args...)
 
 ## interface to parser ##
 
