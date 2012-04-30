@@ -53,6 +53,15 @@ function munmap(p::Ptr,len::Int)
     end
 end
 
+const MS_ASYNC = 1
+const MS_INVALIDATE = 2
+const MS_SYNC = 4
+function msync(p::Ptr, len::Int, flags::Int)
+    ret = ccall(:msync, Int, (Ptr{Void}, Int, Int), p, len, flags)
+    if ret != 0
+        error(strerror())
+    end
+end    
 
 # Higher-level functions
 # Determine a stream's read/write mode, and return prot & flags
@@ -92,3 +101,5 @@ function mmap_array{T,N}(::Type{T}, dims::NTuple{N,Int}, s::IOStream, offset::Fi
     return A
 end
 mmap_array{T,N}(::Type{T}, dims::NTuple{N,Int}, s::IOStream) = mmap_array(T, dims, s, position(s))
+msync{T}(A::Array{T}, flags::Int) = msync(pointer(A), prod(size(A))*sizeof(T), flags)
+msync{T}(A::Array{T}) = msync(A,MS_SYNC)
