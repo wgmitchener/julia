@@ -53,15 +53,15 @@ isequal(x::SymbolNode, y::SymbolNode) = is(x.name,y.name)
 isequal(x::SymbolNode, y::Symbol)     = is(x.name,y)
 isequal(x::Symbol    , y::SymbolNode) = is(x,y.name)
 
-function fshow(io, tv::TypeVar)
+function show(io, tv::TypeVar)
     if !is(tv.lb, None)
-        fshow(io, tv.lb)
-        fprint(io, "<:".data)
+        show(io, tv.lb)
+        print(io, "<:".data)
     end
-    fprint(io, tv.name)
+    print(io, tv.name)
     if !is(tv.ub, Any)
-        fprint(io, "<:".data)
-        fshow(io, tv.ub)
+        print(io, "<:".data)
+        show(io, tv.ub)
     end
 end
 

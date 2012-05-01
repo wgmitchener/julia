@@ -55,7 +55,7 @@ type BackTrace <: Exception
     trace::Array{Any,1}
 end
 
-fshow(io, bt::BackTrace) = fshow(io,bt.e)
+show(io, bt::BackTrace) = show(io,bt.e)
 
 method_missing(f, args...) = throw(MethodError(f, args))
 

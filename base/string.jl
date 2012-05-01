@@ -1,11 +1,11 @@
 ## core text I/O ##
 
-fprint(io, x) = fshow(io, x)
-fprint(io, xs...) = for x in xs fprint(io, x) end
-fprintln(io, xs...) = fprint(io, xs..., '\n')
+print(io::IO, x) = show(io, x)
+print(io::IO, xs...) = for x in xs print(io, x) end
+println(io::IO, xs...) = print(io, xs..., '\n')
 
-print(xs...) = fprint(stdout_stream, xs...)
-println(xs...) = fprintln(stdout_stream, xs...)
+print(xs...)   = print(stdout_stream, xs...)
+println(xs...) = println(stdout_stream, xs...)
 
 ## core string functions ##
 
@@ -25,13 +25,13 @@ ref(s::String, x::Real) = s[iround(x)]
 ref{T<:Integer}(s::String, r::Range1{T}) = s[int(first(r)):int(last(r))]
 # TODO: handle other ranges with stride ±1 specially?
 ref(s::String, v::AbstractVector) =
-    sprint(length(v), io->(for i in v fprint(io,s[i]) end))
+    sprint(length(v), io->(for i in v print(io,s[i]) end))
 
 symbol(s::String) = symbol(cstring(s))
 string(s::String) = s
 
-fprint(io, s::String) = for c in s fprint(io, c) end
-fshow(io, s::String) = fprint_quoted(io, s)
+print(io::IO, s::String) = for c in s print(io, c) end
+show(io::IO, s::String) = print_quoted(io, s)
 
 (*)(s::String...) = strcat(s...)
 (^)(s::String, r::Integer) = repeat(s,r)
@@ -390,7 +390,7 @@ strcat(x...) = strcat(map(string,x)...)
 strcat(s::String, t::String...) =
     (t = strcat(t...); isempty(s) ? t : isempty(t) ? s : RopeString(s, t))
 
-fprint(io, s::RopeString) = fprint(io, s.head, s.tail)
+print(io::IO, s::RopeString) = print(io, s.head, s.tail)
 
 ## transformed strings ##
 
@@ -435,7 +435,7 @@ end
 ## conversion of general objects to strings ##
 
 string(x) = sprint(show, x)
-cstring(x...) = sprint(fprint, x...)
+cstring(x...) = sprint(print, x...)
 
 function cstring(p::Ptr{Uint8})
     p == C_NULL ? error("cannot convert NULL to string") :
@@ -454,10 +454,10 @@ promote_rule(::Type{ASCIIString}, ::Type{CharString} ) = UTF8String
 
 # TODO: this is really the inverse of print_unbackslashed
 
-function fprint_quoted_literal(io, s::String)
-    fprint(io, '"')
-    for c = s; c == '"' ? fprint(io, "\\\"") : fprint(io, c); end
-    fprint(io, '"')
+function print_quoted_literal(io, s::String)
+    print(io, '"')
+    for c = s; c == '"' ? print(io, "\\\"") : print(io, c); end
+    print(io, '"')
 end
 
 ## string escaping & unescaping ##
@@ -468,34 +468,34 @@ escape_nul(s::String, i::Int) =
 is_hex_digit(c::Char) = '0'<=c<='9' || 'a'<=c<='f' || 'A'<=c<='F'
 need_full_hex(s::String, i::Int) = !done(s,i) && is_hex_digit(next(s,i)[1])
 
-function fprint_escaped(io, s::String, esc::String)
+function print_escaped(io, s::String, esc::String)
     i = start(s)
     while !done(s,i)
         c, j = next(s,i)
-        c == '\0'       ? fprint(io, escape_nul(s,j)) :
-        c == '\e'       ? fprint(io, L"\e") :
-        c == '\\'       ? fprint(io, "\\\\") :
-        contains(esc,c) ? fprint(io, '\\', c) :
-        iswprint(c)     ? fprint(io, c) :
-        7 <= c <= 13    ? fprint(io, '\\', "abtnvfr"[c-6]) :
-        c <= '\x7f'     ? fprint(io, L"\x", hex(c, 2)) :
-        c <= '\uffff'   ? fprint(io, L"\u", hex(c, need_full_hex(s,j) ? 4 : 2)) :
-                          fprint(io, L"\U", hex(c, need_full_hex(s,j) ? 8 : 4))
+        c == '\0'       ? print(io, escape_nul(s,j)) :
+        c == '\e'       ? print(io, L"\e") :
+        c == '\\'       ? print(io, "\\\\") :
+        contains(esc,c) ? print(io, '\\', c) :
+        iswprint(c)     ? print(io, c) :
+        7 <= c <= 13    ? print(io, '\\', "abtnvfr"[c-6]) :
+        c <= '\x7f'     ? print(io, L"\x", hex(c, 2)) :
+        c <= '\uffff'   ? print(io, L"\u", hex(c, need_full_hex(s,j) ? 4 : 2)) :
+                          print(io, L"\U", hex(c, need_full_hex(s,j) ? 8 : 4))
         i = j
     end
 end
 
 escape_string(s::String) = sprint(length(s), print_escaped, s, "\"")
-function fprint_quoted(io, s::String)
-    fprint(io, '"')
-    fprint_escaped(io, s, "\"\$") #"# work around syntax highlighting problem
-    fprint(io, '"')
+function print_quoted(io, s::String)
+    print(io, '"')
+    print_escaped(io, s, "\"\$") #"# work around syntax highlighting problem
+    print(io, '"')
 end
-quote_string(s::String) = sprint(length(s)+2, io->fprint_quoted(s))
+quote_string(s::String) = sprint(length(s)+2, io->print_quoted(io,s))
 
 # bare minimum unescaping function unescapes only given characters
 
-function fprint_unescaped_chars(io, s::String, esc::String)
+function print_unescaped_chars(io, s::String, esc::String)
     if !contains(esc,'\\')
         esc = strcat("\\", esc)
     end
@@ -505,16 +505,16 @@ function fprint_unescaped_chars(io, s::String, esc::String)
         if c == '\\' && !done(s,i) && contains(esc,s[i])
             c, i = next(s,i)
         end
-        fprint(io, c)
+        print(io, c)
     end
 end
 
 unescape_chars(s::String, esc::String) =
-    sprint(length(s), fprint_unescaped_chars, s, esc)
+    sprint(length(s), print_unescaped_chars, s, esc)
 
 # general unescaping of traditional C and Unicode escape sequences
 
-function fprint_unescaped(io, s::String)
+function print_unescaped(io, s::String)
     i = start(s)
     while !done(s,i)
         c, i = next(s,i)
@@ -537,7 +537,7 @@ function fprint_unescaped(io, s::String)
                 if m == 2 # \x escape sequence
                     write(io, uint8(n))
                 else
-                    fprint(io, char(n))
+                    print(io, char(n))
                 end
             elseif '0' <= c <= '7'
                 k = 1
@@ -552,22 +552,22 @@ function fprint_unescaped(io, s::String)
                 end
                 write(io, uint8(n))
             else
-                fprint(io, c == 'a' ? '\a' :
-                           c == 'b' ? '\b' :
-                           c == 't' ? '\t' :
-                           c == 'n' ? '\n' :
-                           c == 'v' ? '\v' :
-                           c == 'f' ? '\f' :
-                           c == 'r' ? '\r' :
-                           c == 'e' ? '\e' : c)
+                print(io, c == 'a' ? '\a' :
+                          c == 'b' ? '\b' :
+                          c == 't' ? '\t' :
+                          c == 'n' ? '\n' :
+                          c == 'v' ? '\v' :
+                          c == 'f' ? '\f' :
+                          c == 'r' ? '\r' :
+                          c == 'e' ? '\e' : c)
             end
         else
-            fprint(io, c)
+            print(io, c)
         end
     end
 end
 
-unescape_string(s::String) = sprint(length(s), fprint_unescaped, s)
+unescape_string(s::String) = sprint(length(s), print_unescaped, s)
 
 ## checking UTF-8 & ACSII validity ##
 
@@ -619,7 +619,7 @@ function _jl_interp_parse(s::String, unescape::Function, printer::Function)
         expr(:call, :sprint, printer, sx...)
 end
 
-_jl_interp_parse(s::String, u::Function) = _jl_interp_parse(s, u, fprint)
+_jl_interp_parse(s::String, u::Function) = _jl_interp_parse(s, u, print)
 _jl_interp_parse(s::String) = _jl_interp_parse(s, x->check_utf8(unescape_string(x)))
 
 function _jl_interp_parse_bytes(s::String)
@@ -739,9 +739,9 @@ function shell_split(s::String)
     args
 end
 
-function fprint_shell_word(io, word::String)
+function print_shell_word(io, word::String)
     if isempty(word)
-        fprint(io, "''")
+        print(io, "''")
     end
     has_single = false
     has_special = false
@@ -754,31 +754,31 @@ function fprint_shell_word(io, word::String)
         end
     end
     if !has_special
-        fprint(io, word)
+        print(io, word)
     elseif !has_single
-        fprint(io, '\'', word, '\'')
+        print(io, '\'', word, '\'')
     else
-        fprint(io, '"')
+        print(io, '"')
         for c in word
             if c == '"' || c == '$'
-                fprint(io, '\\')
+                print(io, '\\')
             end
-            fprint(io, c)
+            print(io, c)
         end
-        fprint(io, '"')
+        print(io, '"')
     end
 end
 
-function fprint_shell_escaped(io, cmd::String, args::String...)
-    fprint_shell_word(io, cmd)
+function print_shell_escaped(io, cmd::String, args::String...)
+    print_shell_word(io, cmd)
     for arg in args
-        fprint(io, ' ')
-        fprint_shell_word(io, arg)
+        print(io, ' ')
+        print_shell_word(io, arg)
     end
 end
 
 shell_escape(cmd::String, args::String...) =
-    sprint(fprint_shell_escaped, cmd, args...)
+    sprint(print_shell_escaped, cmd, args...)
 
 ## interface to parser ##
 
@@ -884,31 +884,31 @@ replace(s::String, spl, f::Function, n::Integer) = replace(cstring(s), spl, f, n
 replace(s::String, spl, r, n::Integer) = replace(s, spl, x->r, n)
 replace(s::String, spl, r) = replace(s, spl, r, 0)
 
-function fprint_joined(io, strings, delim, last)
+function print_joined(io, strings, delim, last)
     i = start(strings)
     if done(strings,i)
         return
     end
     str, i = next(strings,i)
-    fprint(io, str)
+    print(io, str)
     while !done(strings,i)
         str, i = next(strings,i)
-        fprint(io, done(strings,i) ? last : delim)
-        fprint(io, str)
+        print(io, done(strings,i) ? last : delim)
+        print(io, str)
     end
 end
 
-function fprint_joined(io, strings, delim)
+function print_joined(io, strings, delim)
     i = start(strings)
     while !done(strings,i)
         str, i = next(strings,i)
-        fprint(io, str)
+        print(io, str)
         if !done(strings,i)
-            fprint(io, delim)
+            print(io, delim)
         end
     end
 end
-fprint_joined(io, strings) = fprint_joined(io, strings, "")
+print_joined(io, strings) = print_joined(io, strings, "")
 
 join(args...) = sprint(print_joined, args...)
 

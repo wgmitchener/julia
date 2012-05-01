@@ -1,1 +1,1 @@
-sprint(@thunk load("perf/perf.jl"))
+load("perf/perf.jl")

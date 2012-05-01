@@ -840,7 +840,7 @@ static void show_type(jl_value_t *st, jl_value_t *t)
     }
 }
 
-DLLEXPORT void jl_fshow_any(jl_value_t *str, jl_value_t *v)
+DLLEXPORT void jl_show_any(jl_value_t *str, jl_value_t *v)
 {
     ios_t *s = (ios_t*)jl_iostr_data(str);
     // fallback for printing some other builtin types

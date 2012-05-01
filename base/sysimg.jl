@@ -20,7 +20,6 @@ include("pointer.jl")
 _jl_libfdm = dlopen("libfdm")
 
 include("float.jl")
-include("char.jl")
 include("reduce.jl")
 include("complex.jl")
 include("rational.jl")
@@ -38,6 +37,7 @@ include("inference.jl")
 
 # I/O, strings & printing
 include("io.jl")
+include("char.jl")
 include("string.jl")
 include("ascii.jl")
 include("utf8.jl")

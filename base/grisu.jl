@@ -43,8 +43,7 @@ function grisu_sig(x::Real, n::Integer)
     grisu(float64(x), GRISU_PRECISION, int32(n))
 end
 
-function _show(x::Float, mode::Int32, n::Int)
-    s = current_output_stream()
+function _show(s, x::Float, mode::Int32, n::Int)
     if isnan(x); return write(s, "NaN"); end
     if isinf(x); return write(s, x < 0 ? "-Inf" : "Inf"); end
     @grisu_ccall x mode n
@@ -95,9 +94,9 @@ function _show(x::Float, mode::Int32, n::Int)
     nothing
 end
 
-fshow(io, x::Float64) = _show(x, GRISU_SHORTEST, 0)
-fshow(io, x::Float32) = _show(x, GRISU_SHORTEST_SINGLE, 0)
-fshowcompact(io, x::Float) = _show(x, GRISU_PRECISION, 6)
+show(io, x::Float64) = _show(io, x, GRISU_SHORTEST, 0)
+show(io, x::Float32) = _show(io, x, GRISU_SHORTEST_SINGLE, 0)
+showcompact(io, x::Float) = _show(io, x, GRISU_PRECISION, 6)
 
 # normal:
 #   0 < pt < len        ####.####           len+1
@@ -153,6 +152,6 @@ function f_jl_print_shortest(io, x::Float, dot::Bool, mode::Int32)
     nothing
 end
 
-fprint_shortest(io, x::Float64, dot::Bool) = f_jl_print_shortest(io, x, dot, GRISU_SHORTEST)
-fprint_shortest(io, x::Float32, dot::Bool) = f_jl_print_shortest(io, x, dot, GRISU_SHORTEST_SINGLE)
-fprint_shortest(io, x::Union(Float,Integer)) = fprint_shortest(io, float(x), false)
+print_shortest(io, x::Float64, dot::Bool) = f_jl_print_shortest(io, x, dot, GRISU_SHORTEST)
+print_shortest(io, x::Float32, dot::Bool) = f_jl_print_shortest(io, x, dot, GRISU_SHORTEST_SINGLE)
+print_shortest(io, x::Union(Float,Integer)) = print_shortest(io, float(x), false)

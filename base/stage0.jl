@@ -4,26 +4,30 @@ if false
     # simple print definitions for debugging. enable these if something
     # goes wrong during bootstrap before printing code is available.
     length(a::Array) = arraylen(a)
-    fprint(io, a::Array{Uint8,1}) = ccall(:jl_print_array_uint8, Void, (Any,), a)
-    fprint(io, s::Symbol) = ccall(:jl_print_symbol, Void, (Any,), s)
-    fprint(io, s::ASCIIString) = fprint(io, s.data)
-    fprint(io, x) = fshow(io, x)
-    fprintln(io, x) = (fprint(io, x); fprint(io, "\n"))
-    fshow(io, x) = ccall(:jl_fshow_any, Void, (Any, Any,), io, x)
-    fshow(io, s::ASCIIString) = fprint(io, s.data)
-    fshow(io, s::Symbol) = fprint(io, s)
-    fshow(io, b::Bool) = fprint(io, b ? "true" : "false")
-    fshow(io, n::Int64) = ccall(:jl_print_int64, Void, (Ptr{Void}, Int64,), io, n)
-    fshow(io, n::Integer)  = fshow(io, int64(n))
-    fprint(io, a...) = for x=a; fprint(io, x); end
-    function fshow(io, e::Expr)
-        fprint(io, e.head)
-        fprint(io, "(")
+    print(x) = print(stdout_stream, x)
+    show(x) = show(stdout_stream, x)
+    print(io, a::Array{Uint8,1}) =
+        ccall(:jl_print_array_uint8, Void, (Ptr{Void},Any,), io.ios, a)
+    print(io, s::Symbol) = ccall(:jl_print_symbol, Void, (Ptr{Void},Any,),
+                                 io.ios, s)
+    print(io, s::ASCIIString) = print(io, s.data)
+    print(io, x) = show(io, x)
+    println(io, x) = (print(io, x); print(io, "\n"))
+    show(io, x) = ccall(:jl_show_any, Void, (Any, Any,), io, x)
+    show(io, s::ASCIIString) = print(io, s.data)
+    show(io, s::Symbol) = print(io, s)
+    show(io, b::Bool) = print(io, b ? "true" : "false")
+    show(io, n::Int64) = ccall(:jl_print_int64, Void, (Ptr{Void}, Int64,), io, n)
+    show(io, n::Integer)  = show(io, int64(n))
+    print(io, a...) = for x=a; print(io, x); end
+    function show(io, e::Expr)
+        print(io, e.head)
+        print(io, "(")
         for i=1:arraylen(e.args)
-            fshow(io, arrayref(e.args,i))
-            fprint(io, ", ")
+            show(io, arrayref(e.args,i))
+            print(io, ", ")
         end
-        fprint(io, ")\n")
+        print(io, ")\n")
     end
 end
 

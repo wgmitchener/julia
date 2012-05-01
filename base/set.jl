@@ -8,7 +8,7 @@ Set() = Set{Any}()
 Set(x...) = Set{Any}(x...)
 Set{T}(x::T...) = Set{T}(x...)
 
-fshow(io, s::Set) = (fshow(io, typeof(s)); fshow_comma_array(io, s,'(',')'))
+show(io, s::Set) = (show(io, typeof(s)); show_comma_array(io, s,'(',')'))
 
 isempty(s::Set) = isempty(s.hash)
 length(s::Set)  = length(s.hash)

@@ -156,9 +156,9 @@ function dlmwrite(io, a, dlm::Char)
         for j = 1:nc
             elt = a[i,j]
             if isa(elt,Float)
-                fprint_shortest(io, elt)
+                print_shortest(io, elt)
             else
-                fprint(io, elt)
+                print(io, elt)
             end
             if j < nc
                 write(io, dlm)

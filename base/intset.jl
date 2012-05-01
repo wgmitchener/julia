@@ -120,20 +120,20 @@ end
 length(s::IntSet) =
     int(ccall(:bitvector_count, Uint64, (Ptr{Uint32}, Uint64, Uint64), s.bits, 0, s.limit))
 
-function fshow(io, s::IntSet)
-    fprint(io, "intset(")
+function show(io, s::IntSet)
+    print(io, "intset(")
     first = true
     for n in s
         if !first
-            fprint(io, ", ")
+            print(io, ", ")
         end
-        fprint(io, n)
+        print(io, n)
         first = false
     end
     if s.fill1s
-        fprint(io, ", ...)")
+        print(io, ", ...)")
     else
-        fprint(io, ")")
+        print(io, ")")
     end
 end
 

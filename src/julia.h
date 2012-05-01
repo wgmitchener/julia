@@ -692,8 +692,8 @@ jl_lambda_info_t *jl_wrap_expr(jl_value_t *expr);
 // some useful functions
 DLLEXPORT void jl_show(jl_value_t *stream, jl_value_t *v);
 void jl_show_tuple(jl_value_t *st, jl_tuple_t *t, char opn, char cls, int comma_one);
-jl_value_t *jl_stdout_obj();
-jl_value_t *jl_stderr_obj();
+DLLEXPORT jl_value_t *jl_stdout_obj();
+DLLEXPORT jl_value_t *jl_stderr_obj();
 
 // modules
 extern jl_module_t *jl_core_module;
