@@ -93,7 +93,7 @@ function _jl_copy_chunks(dest::Vector{Uint64}, pos_d::Integer, src::Vector{Uint6
     delta_ks = ks1 - ks0
 
     u = ~(uint64(0))
-    if delta_kd ==  0
+    if delta_kd == 0
         msk_d0 = ~(u << ld0) | (u << ld1 << 1)
     else
         msk_d0 = ~(u << ld0)
@@ -1350,8 +1350,8 @@ sum(B::BitArray) = nnz(B)
 
 prod{T}(B::BitArray{T}) = (nnz(B) == length(B) ? one(T) : zero(T))
 
-min(B::BitArray) = prod(B)
-max{T}(B::BitArray{T}) = (nnz(B) > 0 ? one(T) : zero(T))
+min{T}(B::BitArray{T}) = length(B) > 0 ? prod(B) : typemax(T)
+max{T}(B::BitArray{T}) = length(B) > 0 ? (nnz(B) > 0 ? one(T) : zero(T)) : typemin(T)
 
 ## map over bitarrays ##
 
