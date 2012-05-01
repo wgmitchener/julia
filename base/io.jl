@@ -94,9 +94,25 @@ end
 
 sprint(f::Function, args...) = sprint(0, f, args...)
 
+# using this is not recommended
+function with_output_to_string(thunk)
+    global OUTPUT_STREAM
+    oldio = OUTPUT_STREAM
+    m = memio()
+    OUTPUT_STREAM = m
+    try
+        thunk()
+        OUTPUT_STREAM = oldio
+    catch e
+        OUTPUT_STREAM = oldio
+        throw(e)
+    end
+    takebuf_string(m)
+end
+
 nthbyte(x::Integer, n::Integer) = (n > sizeof(x) ? uint8(0) : uint8((x>>>((n-1)<<3))))
 
-write(x) = write(stdout_stream, x)
+write(x) = write(OUTPUT_STREAM::IOStream, x)
 write(s, x::Uint8) = error(typeof(s)," does not support byte I/O")
 
 function write(s, x::Integer)

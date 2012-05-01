@@ -3,6 +3,7 @@
 const stdout_stream = make_stdout_stream()
 const stdin_stream = make_stdin_stream()
 const stderr_stream = make_stderr_stream()
+OUTPUT_STREAM = stdout_stream
 
 # restore shared library handles
 

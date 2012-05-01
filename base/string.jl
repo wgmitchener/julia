@@ -4,8 +4,8 @@ print(io::IO, x) = show(io, x)
 print(io::IO, xs...) = for x in xs print(io, x) end
 println(io::IO, xs...) = print(io, xs..., '\n')
 
-print(xs...)   = print(stdout_stream, xs...)
-println(xs...) = println(stdout_stream, xs...)
+print(xs...)   = print(OUTPUT_STREAM::IOStream, xs...)
+println(xs...) = println(OUTPUT_STREAM::IOStream, xs...)
 
 ## core string functions ##
 

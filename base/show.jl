@@ -1,6 +1,6 @@
 # formerly built-in methods. can be replaced any time.
 
-show(x) = show(stdout_stream, x)
+show(x) = show(OUTPUT_STREAM::IOStream, x)
 
 print(io::IOStream, a::Array{Uint8,1}) =
     ccall(:jl_print_array_uint8, Void, (Ptr{Void}, Any,), io, a)
