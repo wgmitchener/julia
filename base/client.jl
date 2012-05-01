@@ -30,7 +30,7 @@ function repl_show(v::ANY)
             print(summary(v))
             if !isempty(v)
                 println(":")
-                print_matrix(reshape(v,(length(v),1)))
+                print_matrix(OUTPUT_STREAM, reshape(v,(length(v),1)))
             end
         else
             show(v)
