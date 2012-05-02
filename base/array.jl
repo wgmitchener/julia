@@ -186,10 +186,46 @@ function ref(A::Array, I::Integer...)
     return A[index]
 end
 
+# Linear indexing with Range1s
+# Do the explicit cases first to avoid ambiguity with later methods
+for N = 1:2
+    @eval begin
+        function ref{T}(A::Array{T,$N}, I::Range1{Int})
+            X = Array(T,length(I))
+            copy_to(X, 1, A, first(I), length(I))
+        end
+    end
+end
+function ref{T}(A::Array{T}, I::Range1{Int})
+    X = Array(T,length(I))
+    copy_to(X, 1, A, first(I), length(I))
+end
+
+# Vector indexing
 # note: this is also useful for Ranges
 ref{T<:Integer}(A::Vector, I::AbstractVector{T}) = [ A[i] | i=I ]
 ref{T<:Integer}(A::AbstractVector, I::AbstractVector{T}) = [ A[i] | i=I ]
 
+# Matrix indexing
+# Once we've checked the bounds, call memcpy directly to skip the extra
+# checks in copy_to
+function ref{T<:BitsKind}(A::Matrix{T}, I::Range1{Int}, J::RangeIndex)
+    if first(I) < 1 || last(I) > size(A,1) || first(J) < 1 || last(J) > size(A,2)
+        throw(BoundsError())
+    end
+    X = Array(T,length(I),length(J))
+    if length(I) == size(A,1) && step(J) == 1
+        ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
+              pointer(X, 1), pointer(A, (first(J)-1)*size(A,1) + 1),
+              size(A,1)*length(J)*sizeof(T))
+    else
+        sz1 = size(A,1)*sizeof(T)
+        for j = J
+            ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
+                  pointer(X, 1), pointer(A, (j-1)*size(A,1) + 1), sz1)
+        end
+    end
+end
 ref{T<:Integer}(A::Matrix, I::AbstractVector{T}, j::Integer) = [ A[i,j] | i=I ]
 ref{T<:Integer}(A::Matrix, I::Integer, J::AbstractVector{T}) = [ A[i,j] | i=I, j=J ]
 ref{T<:Integer}(A::Matrix, I::AbstractVector{T}, J::AbstractVector{T}) = [ A[i,j] | i=I, j=J ]

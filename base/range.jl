@@ -73,6 +73,11 @@ max(r::Range1) = last(r)
 min(r::Range) = r.step > 0 ? r.start : last(r)
 max(r::Range) = r.step > 0 ? last(r) : r.start
 
+# Allow Ints to be treated as Range1s
+first(i::Int) = i
+last(i::Int) = i
+step(i::Int) = 1
+
 # Ranges are intended to be immutable
 copy(r::Ranges) = r
 
