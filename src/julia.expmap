@@ -44,6 +44,7 @@
     jl_takebuf_array;
     jl_takebuf_string;
     jl_readuntil;
+    jl_cpu_cores;
     jl_cstr_to_string;
     jl_array_to_string;
     jl_parse_string;
@@ -65,6 +66,8 @@
     jl_sizeof_off_t;
     jl_sizeof_ios_t;
     jl_stdout_stream;
+    jl_stdout_obj;
+    jl_stderr_obj;
     ios_fd;
     ios_mem;
     jl_ios_mem;

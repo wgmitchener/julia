@@ -18,6 +18,17 @@ length(a::Array) = arraylen(a)
 
 ## copy ##
 
+function copy_to_nocheck{T}(dest::Array{T}, do, src::Array{T}, so, N)
+    if isa(T, BitsKind)
+        ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
+              pointer(dest, do), pointer(src, so), N*sizeof(T))
+    else
+        for i=0:N-1
+            dest[i+do] = src[i+so]
+        end
+    end
+    return dest
+end
 function copy_to{T}(dest::Array{T}, do, src::Array{T}, so, N)
     if so+N-1 > numel(src) || do+N-1 > numel(dest) || do < 1 || so < 1
         throw(BoundsError())
@@ -159,6 +170,90 @@ logspace(start::Real, stop::Real) = logspace(start, stop, 50)
 convert{T,n}(::Type{Array{T,n}}, x::Array{T,n}) = x
 convert{T,n,S}(::Type{Array{T,n}}, x::Array{S,n}) = copy_to(similar(x,T), x)
 
+## Indexing: iterator implementation ##
+
+type ForwardSubarrayIterator
+    index::Int         # the current linear index
+    copy_len::Int      # number of elements that can be copied in blocks
+    len::Vector{Int}   # length of iterator along each non-copied dimension
+    pos::Vector{Int}   # current state of iterator relative to len
+    inc::Vector{Int}   # increment within dimension
+end
+ForwardSubarrayIterator() = ForwardSubarrayIterator(0, 0, Array(Int,0), Array(Int,0), Array(Int,0))
+function ForwardSubarrayIterator(dims::Dims, ind::RangeIndex...)
+    iter = ForwardSubarrayIterator()
+    start!(iter, dims, ind...)
+    return iter
+end
+function start!(iter::ForwardSubarrayIterator, dims::Dims, ind::RangeIndex...)
+    # Clear any old information
+    del_all(iter.len)
+    del_all(iter.pos)
+    del_all(iter.inc)
+    # Prepare to parse ind
+    iscontiguous = true
+    iter.copy_len = 1
+    offset_first = 0
+    offset_last = 0
+    s = 1
+    for idim = 1:length(ind)
+        sz = dims[idim]
+        if idim == length(ind)
+            # Use linear indexing for all remaining dimensions
+            for j = idim+1:length(dims)
+                sz *= dims[j]
+            end
+        end
+        if min(ind[idim]) < 1 || max(ind[idim]) > sz
+            error(BoundsError)
+        end
+        # Parse ind, looking for contiguous blocks of memory (for which we
+        # can use copy_to). Then set up each remaining coordinate's
+        # increment behavior.
+        if iscontiguous && step(ind[idim]) == 1
+            if length(ind[idim]) == sz
+                # We're still accumulating coordinates that form a
+                # contiguous block
+                iter.copy_len *= sz
+            else
+                # The contiguous block is broken, but we can
+                # copy along a subset of this dimension
+                offset_first = iter.copy_len*(min(ind[idim])-1)
+                iter.copy_len *= length(ind[idim])
+                offset_last = offset_first
+                iscontiguous = false
+            end
+        else
+            iscontiguous = false
+            if length(ind[idim]) > 1
+                inc = s*step(ind[idim]) + offset_first - offset_last
+                if !isempty(iter.inc) && inc == iter.inc[end]
+                    iter.len[end] = iter.len[end]*length(ind[idim])
+                else
+                    push(iter.len,length(ind[idim]))
+                    push(iter.inc,inc)
+                end
+            end
+            offset_first += s*(first(ind[idim])-1)
+            offset_last += s*(last(ind[idim])-1)
+        end
+        s *= sz
+    end
+    iter.index = offset_first+1
+    grow(iter.pos,length(iter.len))
+    fill!(iter.pos,1)
+end
+function next!(iter::ForwardSubarrayIterator)
+    idim::Int = 1
+    iter.pos[1] += 1
+    while iter.pos[idim] > iter.len[idim] && idim < length(iter.pos)
+        iter.pos[idim] = 1
+        idim += 1
+        iter.pos[idim] += 1
+    end
+    iter.index += iter.inc[idim]
+end
+
 ## Indexing: ref ##
 
 ref(a::Array, i::Int) = arrayref(a,i)
@@ -169,17 +264,42 @@ ref{T}(a::Array{T,1}, i::Integer) = arrayref(a,int(i))
 ref(a::Array{Any,1}, i::Int) = arrayref(a,i)
 ref(a::Array{Any,1}, i::Integer) = arrayref(a,int(i))
 
-ref(A::Array, i0::Integer, i1::Integer) = A[i0 + size(A,1)*(i1-1)]
-ref(A::Array, i0::Integer, i1::Integer, i2::Integer) =
-    A[i0 + size(A,1)*((i1-1) + size(A,2)*(i2-1))]
-ref(A::Array, i0::Integer, i1::Integer, i2::Integer, i3::Integer) =
-    A[i0 + size(A,1)*((i1-1) + size(A,2)*((i2-1) + size(A,3)*(i3-1)))]
-
-function ref(A::Array, I::Integer...)
+# Note: do not casually change Ints to Integers. See issue #795.
+function ref{T}(A::Union(Matrix{T},Array{T}), i0::Int, i1::Int)
+#    if (1 <= i0 <= size(A,1))
+        A[i0 + size(A,1)*(i1-1)]
+#    else
+#        throw(BoundsError())
+#    end
+end
+function ref{T}(A::Union(Array{T,3},Array{T}), i0::Int, i1::Int, i2::Int)
+#    if (1 <= i0 <= size(A,1)) && (1 <= i1 <= size(A,2))
+        A[i0 + size(A,1)*((i1-1) + size(A,2)*(i2-1))]
+#    else
+#        throw(BoundsError())
+#    end
+end
+function ref{T}(A::Union(Array{T,4},Array{T}), i0::Int, i1::Int, i2::Int, i3::Int)
+#    if (1 <= i0 <= size(A,1)) && (1 <= i1 <= size(A,2)) && (1 <= i2 <= size(A,3))
+        A[i0 + size(A,1)*((i1-1) + size(A,2)*((i2-1) + size(A,3)*(i3-1)))]
+#    else
+#        throw(BoundsError())
+#    end
+end
+function ref{T}(A::Array{T}, I::Int...)
     ndims = length(I)
-    index = I[1]
+ #   if 1 <= I[1] <= size(A,1)
+        index = I[1]
+#    else
+#        throw(BoundsError())
+#    end
     stride = 1
     for k=2:ndims
+#        if 1 <= I[k] <= size(A,k)
+            index = I[1]
+#        else
+#            throw(BoundsError())
+#        end
         stride = stride * size(A, k-1)
         index += (I[k]-1) * stride
     end
@@ -187,67 +307,102 @@ function ref(A::Array, I::Integer...)
 end
 
 # Linear indexing with Range1s
-# Do the explicit cases first to avoid ambiguity with later methods
-for N = 1:2
-    @eval begin
-        function ref{T}(A::Array{T,$N}, I::Range1{Int})
-            X = Array(T,length(I))
-            copy_to(X, 1, A, first(I), length(I))
-        end
-    end
-end
+# Do the explicit cases to prevent ambiguity with later methods
+#for N in (1, 2)
+#    @eval begin
+#        function ref{T}(A::Array{T,$N}, I::Range1{Int})
+#            X = Array(T,length(I))
+#            copy_to(X, 1, A, first(I), length(I))
+#        end
+#    end
+#end
 function ref{T}(A::Array{T}, I::Range1{Int})
     X = Array(T,length(I))
     copy_to(X, 1, A, first(I), length(I))
 end
 
-# Vector indexing
-# note: this is also useful for Ranges
-ref{T<:Integer}(A::Vector, I::AbstractVector{T}) = [ A[i] | i=I ]
-ref{T<:Integer}(A::AbstractVector, I::AbstractVector{T}) = [ A[i] | i=I ]
+# Linear indexing
+ref(A::Array, I::Range{Int}) = [ A[i] for i=I ]
+ref(A::Array, I::AbstractVector{Int}) = [ A[i] for i=I ]
+#ref(A::Array, I::AbstractVector{Int}) = [ A[i] for i=I ]
 
 # Matrix indexing
-# Once we've checked the bounds, call memcpy directly to skip the extra
-# checks in copy_to
-function ref{T<:BitsKind}(A::Matrix{T}, I::Range1{Int}, J::RangeIndex)
+function ref{T}(A::Array{T}, I::Range1{Int}, j::Int)
+    if first(I) < 1 || last(I) > size(A,1) || j < 1 || j > size(A,2)
+        throw(BoundsError())
+    end
+    X = Array(T,length(I))
+    copy_to_nocheck(X, 1, A, (j-1)*size(A,1) + 1, length(I))
+end
+function ref{T}(A::Array{T}, I::Range1{Int}, J::Union(Range1{Int},Range{Int}))
     if first(I) < 1 || last(I) > size(A,1) || first(J) < 1 || last(J) > size(A,2)
         throw(BoundsError())
     end
     X = Array(T,length(I),length(J))
     if length(I) == size(A,1) && step(J) == 1
-        ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
-              pointer(X, 1), pointer(A, (first(J)-1)*size(A,1) + 1),
-              size(A,1)*length(J)*sizeof(T))
-    else
-        sz1 = size(A,1)*sizeof(T)
+        copy_to_nocheck(X, 1, A, (first(J)-1)*size(A,1) + 1, size(A,1)*length(J))    else
         for j = J
-            ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
-                  pointer(X, 1), pointer(A, (j-1)*size(A,1) + 1), sz1)
+            copy_to_nocheck(X, 1, A, (j-1)*size(A,1) + 1, length(I))
         end
     end
 end
-ref{T<:Integer}(A::Matrix, I::AbstractVector{T}, j::Integer) = [ A[i,j] | i=I ]
-ref{T<:Integer}(A::Matrix, I::Integer, J::AbstractVector{T}) = [ A[i,j] | i=I, j=J ]
-ref{T<:Integer}(A::Matrix, I::AbstractVector{T}, J::AbstractVector{T}) = [ A[i,j] | i=I, j=J ]
+ref(A::Array, I::AbstractVector{Int}, j::Int) = [ A[i,j] for i=I ]
+ref(A::Array, i::Int, J::Union(Range1{Int},Range{Int})) = [ A[i,j] for j=J ]
+ref(A::Array, i::Int, J::AbstractVector{Int}) = [ A[i,j] for j=J ]
+ref(A::Array, I::AbstractVector{Int}, J::AbstractVector{Int}) = [ A[i,j] for i=I, j=J ]
 
-let ref_cache = nothing
-global ref
-function ref(A::Array, I::Indices...)
+# Ref for higher dimensions
+
+let ref_iter = ForwardSubarrayIterator()
+function ref{T}(A::Array{T}, I::RangeIndex...)
     i = length(I)
     while i > 0 && isa(I[i],Integer); i-=1; end
     d = map(length, I)::Dims
     X = similar(A, d[1:i])
 
-    if is(ref_cache,nothing)
-        ref_cache = Dict()
+    start!(ref_iter, size(A), I...)
+    if ref_iter.copy_len > 1
+        if isempty(ref_iter.pos)
+            ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
+                  pointer(X, 1), pointer(A, ref_iter.index), ref_iter.copy_len*sizeof(T))
+        else
+            i = 1
+            while ref_iter.pos[end] <= ref_iter.len[end]
+                ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
+                      pointer(X, i), pointer(A, ref_iter.index), ref_iter.copy_len*sizeof(T))
+                i += ref_iter.copy_len
+                next!(ref_iter)
+            end
+        end
+    else
+        # This "branch" should perhaps be implemented in C for best performance
+        arrayset(X, 1, A[ref_iter.index])
+        for i = 2:numel(X)
+            arrayset(X, i, A[next!(ref_iter)])
+        end
     end
-    gen_cartesian_map(ref_cache, ivars -> quote
-            X[storeind] = A[$(ivars...)]
-            storeind += 1
-        end, I, (:A, :X, :storeind), A, X, 1)
     return X
 end
 end
+
+#let ref_cache = nothing
+#global ref
+#function ref(A::Array, I::Indices...)
+#    i = length(I)
+#    while i > 0 && isa(I[i],Integer); i-=1; end
+#    d = map(length, I)::Dims
+#    X = similar(A, d[1:i])
+#
+#    if is(ref_cache,nothing)
+#        ref_cache = Dict()
+#    end
+#    gen_cartesian_map(ref_cache, ivars -> quote
+#            X[storeind] = A[$(ivars...)]
+#            storeind += 1
+#        end, I, (:A, :X, :storeind), A, X, 1)
+#    return X
+#end
+#end
 
 # logical indexing
 
@@ -633,13 +788,13 @@ end
 
 # ^ is difficult, since negative exponents give a different type
 
-./(x::Array, y::Array ) = reshape( [ x[i] ./ y[i] | i=1:numel(x) ], size(x) )
-./(x::Number,y::Array ) = reshape( [ x    ./ y[i] | i=1:numel(y) ], size(y) )
-./(x::Array, y::Number) = reshape( [ x[i] ./ y    | i=1:numel(x) ], size(x) )
+./(x::Array, y::Array ) = reshape( [ x[i] ./ y[i] for i=1:numel(x) ], size(x) )
+./(x::Number,y::Array ) = reshape( [ x    ./ y[i] for i=1:numel(y) ], size(y) )
+./(x::Array, y::Number) = reshape( [ x[i] ./ y    for i=1:numel(x) ], size(x) )
 
-.^(x::Array, y::Array ) = reshape( [ x[i] ^ y[i] | i=1:numel(x) ], size(x) )
-.^(x::Number,y::Array ) = reshape( [ x    ^ y[i] | i=1:numel(y) ], size(y) )
-.^(x::Array, y::Number) = reshape( [ x[i] ^ y    | i=1:numel(x) ], size(x) )
+.^(x::Array, y::Array ) = reshape( [ x[i] ^ y[i] for i=1:numel(x) ], size(x) )
+.^(x::Number,y::Array ) = reshape( [ x    ^ y[i] for i=1:numel(y) ], size(y) )
+.^(x::Array, y::Number) = reshape( [ x[i] ^ y    for i=1:numel(x) ], size(x) )
 
 function .^{S<:Integer,T<:Integer}(A::Array{S}, B::Array{T})
     F = Array(Float64, promote_shape(size(A), size(B)))
@@ -885,7 +1040,7 @@ rotr90(A::AbstractMatrix, k::Integer) = rotl90(A,-k)
 rot180(A::AbstractMatrix, k::Integer) = k % 2 == 1 ? rot180(A) : copy(A)
 const rot90 = rotl90
 
-reverse(v::StridedVector) = (n=length(v); [ v[n-i+1] | i=1:n ])
+reverse(v::StridedVector) = (n=length(v); [ v[n-i+1] for i=1:n ])
 function reverse!(v::StridedVector)
     n = length(v)
     r = n
@@ -940,7 +1095,7 @@ end
 
 let findn_cache = nothing
 function findn_one(ivars)
-    s = { quote I[$i][count] = $ivars[i] end | i = 1:length(ivars)}
+    s = { quote I[$i][count] = $ivars[i] end for i = 1:length(ivars)}
     quote
     	Aind = A[$(ivars...)]
     	if Aind != z
@@ -1013,11 +1168,11 @@ areduce{T}(f::Function, A::StridedArray{T}, region::Region, v0) =
 let areduce_cache = nothing
 # generate the body of the N-d loop to compute a reduction
 function gen_areduce_func(n, f)
-    ivars = { gensym() | i=1:n }
+    ivars = { gensym() for i=1:n }
     # limits and vars for reduction loop
-    lo    = { gensym() | i=1:n }
-    hi    = { gensym() | i=1:n }
-    rvars = { gensym() | i=1:n }
+    lo    = { gensym() for i=1:n }
+    hi    = { gensym() for i=1:n }
+    rvars = { gensym() for i=1:n }
     setlims = { quote
         # each dim of reduction is either 1:sizeA or ivar:ivar
         if contains(region,$i)
@@ -1026,8 +1181,8 @@ function gen_areduce_func(n, f)
         else
             $lo[i] = $hi[i] = $ivars[i]
         end
-               end | i=1:n }
-    rranges = { :( ($lo[i]):($hi[i]) ) | i=1:n }  # lo:hi for all dims
+               end for i=1:n }
+    rranges = { :( ($lo[i]):($hi[i]) ) for i=1:n }  # lo:hi for all dims
     body =
     quote
         _tot = v0
@@ -1041,7 +1196,7 @@ function gen_areduce_func(n, f)
         local _F_
         function _F_(f, A, region, R, v0)
             _ind = 1
-            $make_loop_nest(ivars, { :(1:size(R,$i)) | i=1:n }, body)
+            $make_loop_nest(ivars, { :(1:size(R,$i)) for i=1:n }, body)
         end
         _F_
     end
@@ -1303,7 +1458,7 @@ function transpose{T<:Union(Float64,Float32,Complex128,Complex64)}(A::Matrix{T})
     if numel(A) > 50000
         return _jl_fftw_transpose(reshape(A, size(A, 2), size(A, 1)))
     else
-        return [ A[j,i] | i=1:size(A,2), j=1:size(A,1) ]
+        return [ A[j,i] for i=1:size(A,2), j=1:size(A,1) ]
     end
 end
 
@@ -1311,11 +1466,11 @@ ctranspose{T<:Real}(A::StridedVecOrMat{T}) = transpose(A)
 
 ctranspose(x::StridedVecOrMat) = transpose(x)
 
-transpose(x::StridedVector) = [ x[j] | i=1, j=1:size(x,1) ]
-transpose(x::StridedMatrix) = [ x[j,i] | i=1:size(x,2), j=1:size(x,1) ]
+transpose(x::StridedVector) = [ x[j] for i=1, j=1:size(x,1) ]
+transpose(x::StridedMatrix) = [ x[j,i] for i=1:size(x,2), j=1:size(x,1) ]
 
-ctranspose{T<:Number}(x::StridedVector{T}) = [ conj(x[j]) | i=1, j=1:size(x,1) ]
-ctranspose{T<:Number}(x::StridedMatrix{T}) = [ conj(x[j,i]) | i=1:size(x,2), j=1:size(x,1) ]
+ctranspose{T<:Number}(x::StridedVector{T}) = [ conj(x[j]) for i=1, j=1:size(x,1) ]
+ctranspose{T<:Number}(x::StridedMatrix{T}) = [ conj(x[j,i]) for i=1:size(x,2), j=1:size(x,1) ]
 
 ## Permute ##
 
@@ -1332,7 +1487,7 @@ function permute(A::StridedArray, perm)
     end
 
     #calculates all the strides
-    strides = [ stride(A, perm[dim]) | dim = 1:length(perm) ]
+    strides = [ stride(A, perm[dim]) for dim = 1:length(perm) ]
 
     #Creates offset, because indexing starts at 1
     offset = 0
@@ -1343,7 +1498,7 @@ function permute(A::StridedArray, perm)
 
     function permute_one(ivars)
         len = length(ivars)
-        counts = { gensym() | i=1:len}
+        counts = { gensym() for i=1:len}
         toReturn = cell(len+1,2)
         for i = 1:numel(toReturn)
             toReturn[i] = nothing
