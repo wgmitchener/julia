@@ -24,27 +24,24 @@ function repl_callback(ast::ANY, show_value)
 end
 
 # called to show a REPL result
-function repl_show(v::ANY)
+repl_show(v::ANY) = repl_show(OUTPUT_STREAM, v)
+function repl_show(io, v::ANY)
     if !(isa(v,Function) && isgeneric(v))
         if isa(v,AbstractVector) && !isa(v,Ranges)
-            print(summary(v))
+            print(io, summary(v))
             if !isempty(v)
-                println(":")
-                print_matrix(OUTPUT_STREAM, reshape(v,(length(v),1)))
+                println(io, ":")
+                print_matrix(io, reshape(v,(length(v),1)))
             end
         else
-            show(v)
+            show(io, v)
         end
     end
     if isgeneric(v)
         if isa(v,CompositeKind)
-            println()
-            name = v.name.name
-        else
-            name = string(v)
+            println(io)
         end
-        println("Methods for generic function ", name)
-        ccall(:jl_show_method_table, Void, (Any,), v)
+        show(io, v.env)
     end
 end
 

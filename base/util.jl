@@ -79,6 +79,25 @@ function function_loc(f::Function, types)
 end
 function_loc(f::Function) = function_loc(f, (Any...))
 
+function whicht(f, types)
+    for m = getmethods(f, types)
+        if isa(m[3],LambdaStaticData)
+            lsd = m[3]::LambdaStaticData
+            d = f.env.defs
+            while !is(d,())
+                if is(d.func.code, lsd)
+                    print(stdout_stream, f.env.name)
+                    show(stdout_stream, d); println(stdout_stream)
+                    return
+                end
+                d = d.next
+            end
+        end
+    end
+end
+
+which(f, args...) = whicht(f, map(a->(isa(a,Type) ? Type{a} : typeof(a)), args))
+
 edit(file::String) = edit(file, 1)
 function edit(file::String, line::Int)
     editor = get(ENV, "JULIA_EDITOR", "emacs")
@@ -103,7 +122,7 @@ function edit(file::String, line::Int)
         elseif editor == "subl"
             run(`subl $file:$line`)
         else
-            error("Invalid JULIA_EDITOR value: $(sprint(show, editor))")
+            error("Invalid JULIA_EDITOR value: $(sshow(editor))")
         end
     else
         if editor == "emacs"
@@ -115,7 +134,7 @@ function edit(file::String, line::Int)
         elseif editor == "subl"
             run(`subl $file:$line`)
         else
-            error("Invalid JULIA_EDITOR value: $(sprint(show, editor))")
+            error("Invalid JULIA_EDITOR value: $(sshow(editor))")
         end
     end
     nothing
@@ -388,3 +407,19 @@ function help(x)
         println("  which has fields $(t.names)")
     end
 end
+
+# run some code in a different directory
+function chdir(f::Function, dir::String)
+    old = getcwd()
+    try
+        setcwd(dir)
+        res = f()
+        setcwd(old)
+        res
+    catch err
+        setcwd(old)
+        throw(err)
+    end
+end
+
+macro chdir(dir,ex); :(chdir(()->$ex,$dir)); end

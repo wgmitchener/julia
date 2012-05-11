@@ -78,7 +78,7 @@ v = pop(l)
 @assert isequal([ones(2,2), 2*ones(1,2)], [1 1; 1 1; 2 2])
 
 # "end"
-X = [ i+2j | i=1:5, j=1:5 ]
+X = [ i+2j for i=1:5, j=1:5 ]
 @assert X[end,end] == 15
 @assert X[end]     == 15  # linear index
 @assert X[2,  end] == 12
@@ -169,5 +169,19 @@ end
 ## basic darray ##
 
 d = drand(10,10)
-@assert all(d'' == d)
-@assert all(convert(Array,d)==d)
+@assert isequal(d'', d)
+@assert isequal(convert(Array,d), d)
+
+## cumsum
+
+begin
+    local A, A1, A2, A3
+    A = ones(Int,2,3,4)
+    A1 = reshape(repmat([1,2],1,12),2,3,4)
+    A2 = reshape(repmat([1 2 3],2,4),2,3,4)
+    A3 = reshape(repmat([1 2 3 4],6,1),2,3,4)
+    @assert isequal(cumsum(A),A1)
+    @assert isequal(cumsum(A,1),A1)
+    @assert isequal(cumsum(A,2),A2)
+    @assert isequal(cumsum(A,3),A3)
+end

@@ -2,8 +2,6 @@
 
 show(x) = show(OUTPUT_STREAM::IOStream, x)
 
-print(io::IOStream, a::Array{Uint8,1}) =
-    ccall(:jl_print_array_uint8, Void, (Ptr{Void}, Any,), io, a)
 print(io::IOStream, s::Symbol) = ccall(:jl_print_symbol, Void, (Ptr{Void}, Any,), io, s)
 show(io, x) = ccall(:jl_show_any, Void, (Any, Any,), io, x)
 
@@ -200,6 +198,35 @@ function show(io, bt::BackTrace)
         print(io, " in ", t[i], " at ", t[i+1])
         if lno >= 1
             print(io, ":", lno)
+        end
+    end
+end
+
+function show(io, m::Method)
+    tv = m.tvars
+    if !isa(tv,Tuple)
+        tv = (tv,)
+    end
+    if !isempty(tv)
+        show_delim_array(io, tv, '{', ',', '}', false)
+    end
+    show(io, m.sig)
+    li = m.func.code
+    if li.line > 0
+        print(io, " at ", li.file, ":", li.line)
+    end
+end
+
+function show(io, mt::MethodTable)
+    name = mt.name
+    println(io, "Methods for generic function ", name)
+    d = mt.defs
+    while !is(d,())
+        print(io, name)
+        show(io, d)
+        d = d.next
+        if !is(d,())
+            println(io)
         end
     end
 end
@@ -405,7 +432,7 @@ dims2string(d) = length(d) == 0 ? "0-dimensional" :
                  join(map(string,d), 'x')
 
 summary{T}(a::AbstractArray{T}) =
-    strcat(dims2string(size(a)), " ", string(T), " ", string(typeof(a).name))
+    string(dims2string(size(a)), " ", T, " ", typeof(a).name)
 
 function show_nd(io, a::AbstractArray)
     if isempty(a)
@@ -447,7 +474,7 @@ function whos()
     global VARIABLES
     for v = map(symbol,sort(map(string, VARIABLES)))
         if isbound(v)
-            println(io, rpad(v, 30), summary(eval(v)))
+            println(rpad(v, 30), summary(eval(v)))
         end
     end
 end

@@ -887,29 +887,40 @@ end
 
 ## Binary comparison operators ##
 
-for f in (:(==), :!=, :<, :<=)
+@vectorize_2arg Number (==)
+@vectorize_2arg Number (!=)
+@vectorize_2arg Real (<)
+@vectorize_2arg Real (<=)
+
+for (f,isf) in ((:(==),:isequal), (:(<), :isless))
     @eval begin
         function ($f)(A::Array, B::Array)
             F = Array(Bool, promote_shape(size(A),size(B)))
-            for i = 1:numel(A)
-                F[i] = ($f)(A[i], B[i])
-            end
-            return F
-        end
-        function ($f)(A::Number, B::Array)
-            F = similar(B, Bool)
             for i = 1:numel(B)
-                F[i] = ($f)(A, B[i])
+                F[i] = ($isf)(A[i], B[i])
             end
             return F
         end
-        function ($f)(A::Array, B::Number)
-            F = similar(A, Bool)
-            for i = 1:numel(A)
-                F[i] = ($f)(A[i], B)
+        ($f)(A, B::Array) =
+            reshape([ ($isf)(A, B[i]) for i=1:length(B)], size(B))
+        ($f)(A::Array, B) =
+            reshape([ ($isf)(A[i], B) for i=1:length(A)], size(A))
+    end
+end
+
+for (f,isf) in ((:(!=),:isequal), (:(<=), :isless))
+    @eval begin
+        function ($f)(A::Array, B::Array)
+            F = Array(Bool, promote_shape(size(A),size(B)))
+            for i = 1:numel(B)
+                F[i] = !($isf)(B[i], A[i])
             end
             return F
         end
+        ($f)(A, B::Array) =
+            reshape([ !($isf)(B[i], A) for i=1:length(B)], size(B))
+        ($f)(A::Array, B) =
+            reshape([ !($isf)(B, A[i]) for i=1:length(A)], size(A))
     end
 end
 
