@@ -18,13 +18,13 @@ length(a::Array) = arraylen(a)
 
 ## copy ##
 
-function copy_to_nocheck{T}(dest::Array{T}, do, src::Array{T}, so, N)
+function copy_to_nocheck{T}(dest::Array{T}, dsto, src::Array{T}, so, N)
     if isa(T, BitsKind)
         ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
-              pointer(dest, do), pointer(src, so), N*sizeof(T))
+              pointer(dest, dsto), pointer(src, so), N*sizeof(T))
     else
         for i=0:N-1
-            dest[i+do] = src[i+so]
+            dest[i+dsto] = src[i+so]
         end
     end
     return dest
@@ -317,7 +317,7 @@ function ref{T}(A::Array{T}, I::Int...)
     return A[index]
 end
 
-# Linear indexing with Range1s
+# Linear indexing with Colon and Range1s
 # Do the explicit cases to prevent ambiguity with later methods
 #for N in (1, 2)
 #    @eval begin
@@ -327,15 +327,18 @@ end
 #        end
 #    end
 #end
+function ref{T}(A::Array{T}, Colon)
+    X = Array(T, numel(A))
+    copy_to_nocheck(X, 1, A, 1, numel(A))
+end
 function ref{T}(A::Array{T}, I::Range1{Int})
-    X = Array(T,length(I))
+    X = Array(T, length(I))
     copy_to(X, 1, A, first(I), length(I))
 end
 
 # Linear indexing
 ref(A::Array, I::Range{Int}) = [ A[i] for i=I ]
 ref(A::Array, I::AbstractVector{Int}) = [ A[i] for i=I ]
-#ref(A::Array, I::AbstractVector{Int}) = [ A[i] for i=I ]
 
 # Matrix indexing
 function ref{T}(A::Array{T}, I::Range1{Int}, j::Int)
