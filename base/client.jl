@@ -1,6 +1,9 @@
 ## client.jl - frontend handling command line options, environment setup,
 ##             and REPL
 
+@unix_only _jl_repl = _jl_lib
+@windows_only _jl_repl = ccall(:GetModuleHandleA,stdcall,Ptr{Void},(Ptr{Void},),C_NULL)
+
 const _jl_color_normal = "\033[0m"
 
 function _jl_answer_color()
@@ -37,10 +40,7 @@ function repl_show(io, v::ANY)
             show(io, v)
         end
     end
-    if isgeneric(v)
-        if isa(v,CompositeKind)
-            println(io)
-        end
+    if isgeneric(v) && !isa(v,CompositeKind)
         show(io, v.env)
     end
 end
@@ -82,6 +82,12 @@ function run_repl()
     if _jl_have_color
         ccall(:jl_enable_color, Void, ())
     end
+    atexit() do
+        if _jl_have_color
+            print(_jl_color_normal)
+        end
+        println()
+    end
 
     # ctrl-C interrupt for interactive use
     ccall(:jl_install_sigint_handler, Void, ())
@@ -96,11 +102,6 @@ function run_repl()
         end
         _jl_eval_user_input(ast, show_value!=0)
     end
-
-    if _jl_have_color
-        print(_jl_color_normal)
-    end
-    println()
 end
 
 function parse_input_line(s::String)
@@ -156,9 +157,7 @@ function process_options(args::Array{Any,1})
             addprocs_local(np-1)
         elseif args[i]=="--machinefile"
             i+=1
-            f = open(args[i])
-            machines = split(readall(f), '\n', false)
-            close(f)
+            machines = split(readall(args[i]), '\n', false)
             addprocs_ssh(machines)
         elseif args[i]=="-v" || args[i]=="--version"
             println("julia version $VERSION")
@@ -183,7 +182,11 @@ end
 const _jl_roottask = current_task()
 const _jl_roottask_wi = WorkItem(_jl_roottask)
 
+_jl_is_interactive = false
+isinteractive() = (_jl_is_interactive::Bool)
+
 function _start()
+    atexit(()->flush(stdout_stream))
     try
         ccall(:jl_register_toplevel_eh, Void, ())
         ccall(:jl_start_io_thread, Void, ())
@@ -202,15 +205,16 @@ function _start()
         end
 
         global const VARIABLES = {}
-        global const LOAD_PATH = String["", "$JULIA_HOME/", "$JULIA_HOME/extras/"]
+        global const LOAD_PATH = String["", "$JULIA_HOME/../lib/julia/extras/"]
 
         # Load customized startup
-        try include(strcat(getcwd(),"/startup.jl")) end
+        try include(strcat(cwd(),"/startup.jl")) end
         try include(strcat(ENV["HOME"],"/.juliarc.jl")) end
 
         (quiet,repl) = process_options(ARGS)
         if repl
             global _jl_have_color = success(`tput setaf 0`) || has(ENV, "TERM") && matches(r"^xterm", ENV["TERM"])
+            global _jl_is_interactive = true
             if !quiet
                 _jl_banner()
             end
@@ -221,5 +225,19 @@ function _start()
         println()
         exit(1)
     end
-    flush(stdout_stream)
+end
+
+const _jl_atexit_hooks = {}
+
+atexit(f::Function) = (enqueue(_jl_atexit_hooks, f); nothing)
+
+function _atexit()
+    for f in _jl_atexit_hooks
+        try
+            f()
+        catch e
+            show(e)
+            println()
+        end
+    end
 end

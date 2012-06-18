@@ -8,6 +8,7 @@ USRLIB = $(USR)/lib
 USRBIN = $(USR)/bin
 USRINC = $(USR)/include
 LLVMROOT = $(USR)
+BUILD = $(USR)
 
 OS = $(shell uname)
 ARCH = $(shell uname -m)
@@ -37,9 +38,12 @@ JFFLAGS = -O2 $(fPIC)
 USEGCC = 1
 USECLANG = 0
 
+GCC = gcc
+GPLUSPLUS = g++
+
 ifeq ($(USEGCC),1)
-CC = gcc
-CXX = g++
+CC = $(GCC)
+CXX = $(GPLUSPLUS)
 JCFLAGS = -std=gnu99 -pipe $(fPIC) -fno-strict-aliasing -D_FILE_OFFSET_BITS=64
 JCXXFLAGS = -pipe $(fPIC) -fno-rtti
 DEBUGFLAGS = -ggdb3 -DDEBUG
@@ -56,7 +60,7 @@ SHIPFLAGS = -O3 -DNDEBUG
 endif
 
 # if not absolute, then relative to JULIA_HOME
-JCFLAGS += '-DJL_SYSTEM_IMAGE_PATH="sys.ji"'
+JCFLAGS += '-DJL_SYSTEM_IMAGE_PATH="../lib/julia/sys.ji"'
 
 # If OpenBLAS doesn't build, find your architechure at the following URL and enter it below
 # https://github.com/xianyi/OpenBLAS/blob/master/GotoBLAS_01Readme.txt
@@ -76,6 +80,7 @@ USE_SYSTEM_GMP=0
 USE_SYSTEM_ARPACK=0
 USE_SYSTEM_SUITESPARSE=0
 USE_SYSTEM_GLPK=0
+USE_SYSTEM_NGINX=0
 
 ifeq ($(USE_DEBIAN), 1)
 USE_SYSTEM_LLVM=1
@@ -127,7 +132,6 @@ else
 PCRE_CONFIG = $(USR)/bin/pcre-config
 endif
 
-LIBBLASNAME = libopenblas
 ifeq ($(USE_SYSTEM_BLAS), 1)
 ifeq ($(OS), Darwin)
 LIBBLAS = -framework vecLib -lBLAS
@@ -138,13 +142,14 @@ LIBBLASNAME = libblas
 endif
 else
 ifeq ($(OS), WINNT)
-LIBBLAS = deps/openblas-$(OPENBLAS_VER)/libopenblas.lib
+LIBBLAS = $(USRLIB)/libopenblas-r0.1.1.$(SHLIB_EXT) #necessary due to some stupid Windows behavoir - will try yto fix soon
+LIBBLASNAME = libopenblas-r0.1.1
 else
 LIBBLAS = -L$(USRLIB) -lopenblas
+LIBBLASNAME = libopenblas
 endif
 endif
 
-LIBLAPACKNAME = libopenblas
 ifeq ($(USE_SYSTEM_LAPACK), 1)
 ifeq ($(OS), Darwin)
 LIBLAPACK = -framework vecLib -lLAPACK
@@ -154,41 +159,62 @@ LIBLAPACK = -llapack
 LIBLAPACKNAME = liblapack
 endif
 else
-LIBLAPACK = -L$(USRLIB) -lopenblas
+LIBLAPACK = $(LIBBLAS)
+LIBLAPACKNAME = $(LIBBLASNAME)
 endif
 
 # OS specific stuff
 
+RPATH = 
+RPATH_ORIGIN = 
+
+ifeq ($(OS), WINNT)
+SHELL_EXT = bat
+else
+SHELL_EXT = sh
+endif
+
 ifeq ($(OS), Linux)
+INSTALL_NAME_CMD = true -ignore
+INSTALL_NAME_CHANGE_CMD = true -ignore
 SHLIB_EXT = so
-RPATH = -Wl,-rpath,'$$ORIGIN/usr/lib'
-OSLIBS += -ldl -lrt -Wl,--export-dynamic -Wl,--version-script=$(JULIAHOME)/src/julia.expmap $(LIBUNWIND)
+RPATH = -Wl,-rpath,'$$ORIGIN/../lib'
+RPATH_ORIGIN = -Wl,-rpath,'$$ORIGIN'
+OSLIBS += -ldl -lrt -Wl,--export-dynamic -Wl,--version-script=$(JULIAHOME)/src/julia.expmap -Wl,--no-whole-archive $(LIBUNWIND)
 WHOLE_ARCHIVE = -Wl,--whole-archive
 NO_WHOLE_ARCHIVE = -Wl,--no-whole-archive
+JLDFLAGS = -Wl,-Bdynamic
 endif
 
 ifeq ($(OS), FreeBSD)
+INSTALL_NAME_CMD = true -ignore
+INSTALL_NAME_CHANGE_CMD = true -ignore
 SHLIB_EXT = so
-OSLIBS += -Wl,--export-dynamic -Wl,--version-script=$(JULIAHOME)/src/julia.expmap -lutil -lm  $(LIBUNWIND)
-RPATH = -Wl,-rpath,'$$ORIGIN/usr/lib'
+RPATH = -Wl,-rpath,'$$ORIGIN/../lib' -Wl,-z,origin
+RPATH_ORIGIN = -Wl,-rpath,'$$ORIGIN' -Wl,-z,origin
 WHOLE_ARCHIVE = -Wl,--whole-archive
 NO_WHOLE_ARCHIVE = -Wl,--no-whole-archive
+JLD_FLAGS = -Wl,-Bdynamic
+OSLIBS += -lkvm -lrt -Wl,--export-dynamic -Wl,--version-script=$(JULIAHOME)/src/julia.expmap $(NO_WHOLE_ARCHIVE) $(LIBUNWIND)
 endif
 
 ifeq ($(OS), Darwin)
+INSTALL_NAME_CMD = install_name_tool -id @executable_path/../lib/
+INSTALL_NAME_CHANGE_CMD = install_name_tool -change
 SHLIB_EXT = dylib
-RPATH = 
 OSLIBS += -ldl -Wl,-w -framework ApplicationServices
 WHOLE_ARCHIVE = -Xlinker -all_load
-NO_WHOLE_ARCHIVE = 
+NO_WHOLE_ARCHIVE =
+JLDFLAGS =
 endif
 
 ifeq ($(OS), WINNT)
+INSTALL_NAME_CMD = true -ignore
+INSTALL_NAME_CHANGE_CMD = true -ignore
 SHLIB_EXT = dll
-RPATH = 
-OSLIBS += -Wl,--export-all-symbols -Wl,--version-script=$(JULIAHOME)/src/julia.expmap -L"F:\Program Files\Microsoft SDKs\Windows\v7.1\Lib" -lntdll -lkernel32 -lWs2_32 -lIphlpapi
-WHOLE_ARCHIVE =
-NO_WHOLE_ARCHIVE =
+WHOLE_ARCHIVE = -Wl,--whole-archive
+NO_WHOLE_ARCHIVE = -Wl,--no-whole-archive
+OSLIBS += -Wl,--export-all-symbols -Wl,--version-script=$(JULIAHOME)/src/julia.expmap -lpthread $(NO_WHOLE_ARCHIVE) -lPsapi -lkernel32 -lWs2_32 -lIphlpapi
 endif
 
 # MKL
@@ -203,13 +229,54 @@ LIBLAPACKNAME = libmkl_rt
 endif
 
 # Libraries to link
-LIBS = $(shell $(LLVM_CONFIG) --libfiles) $(JULIAHOME)/src/flisp/libflisp.a $(JULIAHOME)/src/support/libsupport.a -L$(USR)/lib $(USRLIB)/uv.a $(OSLIBS) -lpthread $(shell $(LLVM_CONFIG) --ldflags)
+LIBS = $(shell $(LLVM_CONFIG) --libfiles) $(WHOLE_ARCHIVE) $(JULIAHOME)/src/flisp/libflisp.a $(WHOLE_ARCHIVE) $(JULIAHOME)/src/support/libsupport.a -L$(USR)/lib $(USRLIB)/uv.a $(OSLIBS) -lpthread $(shell $(LLVM_CONFIG) --ldflags)
+
+# Make tricks
+
+define dir_target
+$$(subst $$(abspath $(JULIAHOME))/,,$$(abspath $(1))): $$(abspath $(1))
+$$(abspath $(1)): 
+	@mkdir -p $$@
+endef
+
+ifeq ($(OS), WINNT)
+define mingw_to_dos
+$(subst /,\\,$(subst $(shell $(2) pwd),$(shell $(2) cmd //C cd),$(abspath $(1))))
+endef
+define symlink_target
+CLEAN_TARGETS += clean-$(2)/$(1)
+clean-$$(abspath $(2)/$(1)): 
+	@-cmd //C rmdir $$(call mingw_to_dos,$(2)/$(1),cd $(2) &&)
+$$(subst $$(abspath $(JULIAHOME))/,,$$(abspath $(2)/$(1))): $$(abspath $(2)/$(1))
+$$(abspath $(2)/$(1)): | $$(abspath $(2))
+	@cmd //C mklink //J $$(call mingw_to_dos,$(2)/$(1),cd $(2) &&) $$(call mingw_to_dos,$(1),) 
+endef
+else
+define symlink_target
+CLEAN_TARGETS += clean-$(2)/$(1)
+clean-$$(abspath $(2)/$(1)): 
+	@-rm $$(abspath $(2)/$(1))
+$$(subst $$(abspath $(JULIAHOME))/,,$$(abspath $(2)/$(1))): $$(abspath $(2)/$(1))
+$$(abspath $(2)/$(1)): | $$(abspath $(2))
+	@ln -sf $$(abspath $(1)) $$@ 
+endef
+endif
+
+JULIA_EXECUTABLE_debug = $(BUILD)/bin/julia-debug-$(DEFAULT_REPL)
+JULIA_EXECUTABLE_release = $(BUILD)/bin/julia-release-$(DEFAULT_REPL)
+
+ifeq ($(OS), WINNT)
+JULIA_EXECUTABLE = $(JULIA_EXECUTABLE_release)
+else
+JULIA_EXECUTABLE = $(JULIAHOME)/julia
+endif
+
 
 # Colors for make
 
 USE_QUIET = 1
-
 ifeq ($(USE_QUIET), 1)
+
 CCCOLOR="\033[34m"
 LINKCOLOR="\033[34;1m"
 PERLCOLOR="\033[35m"
@@ -221,11 +288,20 @@ BINCOLOR="\033[37;1m"
 JULCOLOR="\033[34;1m"
 ENDCOLOR="\033[0m"
 
-GOAL=$(subst $(abspath $(JULIAHOME))/,,$(abspath $(CURDIR)/$@))
+GOAL=$(subst $(abspath $(JULIAHOME))/,,$(abspath $@))
 
 QUIET_CC = @printf '    %b %b\n' $(CCCOLOR)CC$(ENDCOLOR) $(SRCCOLOR)$(GOAL)$(ENDCOLOR);
 QUIET_LINK = @printf '    %b %b\n' $(LINKCOLOR)LINK$(ENDCOLOR) $(BINCOLOR)$(GOAL)$(ENDCOLOR);
 QUIET_PERL = @printf '    %b %b\n' $(PERLCOLOR)PERL$(ENDCOLOR) $(BINCOLOR)$(GOAL)$(ENDCOLOR);
 QUIET_FLISP = @printf '    %b %b\n' $(FLISPCOLOR)FLISP$(ENDCOLOR) $(BINCOLOR)$(GOAL)$(ENDCOLOR);
 QUIET_JULIA = @printf '    %b %b\n' $(JULIACOLOR)JULIA$(ENDCOLOR) $(BINCOLOR)$(GOAL)$(ENDCOLOR);
+
+else
+
+QUIET_CC =
+QUIET_LINK =
+QUIET_PERL =
+QUIET_FLISP =
+QUIET_JULIA =
+
 endif

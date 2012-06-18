@@ -6,21 +6,19 @@ override CXXFLAGS += $(JCXXFLAGS)
 
 SRCS = \
 	jltypes gf ast builtins module codegen interpreter \
-	alloc dlload sys init task array dump
-ifeq ($(OS),WINNT)
-	SRCS+=asprintf
-endif
+	alloc dlload sys init task array dump toplevel
+
 FLAGS = \
 	-D_GNU_SOURCE \
-    -Wall -Wno-strict-aliasing -fno-omit-frame-pointer \
+	-Wall -Wno-strict-aliasing -fno-omit-frame-pointer \
 	-Iflisp -Isupport -fvisibility=hidden -fno-common \
 	-I$(shell $(LLVM_CONFIG) --includedir) \
-	-I$(JULIAHOME)/external/libuv  -I$(USR)/include
+	-I$(JULIAHOME)/deps/libuv/include
 
 ifneq ($(MAKECMDGOALS),debug)
-TARGET = "debug"
+TARGET =
 else
-TARGET = 
+TARGET = "debug"
 endif
 
 OBJS = $(SRCS:%=%.o)
@@ -36,23 +34,22 @@ ifeq ($(USE_COPY_STACKS),1)
 JCFLAGS += -DCOPY_STACKS
 endif
 
-# Libraries to link
-LIBS = $(shell $(LLVM_CONFIG) --libfiles) $(JULIAHOME)/src/flisp/libflisp.a $(JULIAHOME)/src/support/libsupport.a $(OSLIBS)
-
 default: release
 
 release debug: %: libjulia-%
 
-%.o: %.c julia.h
+HEADERS = julia.h $(wildcard support/*.h) $(JULIAHOME)/deps/libuv/include/uv.h
+
+%.o: %.c $(HEADERS)
 	$(QUIET_CC) $(CC) $(CFLAGS) $(SHIPFLAGS) -c $< -o $@
-%.do: %.c julia.h
+%.do: %.c $(HEADERS)
 	$(QUIET_CC) $(CC) $(CFLAGS) $(DEBUGFLAGS) -c $< -o $@
-%.o: %.cpp julia.h
+%.o: %.cpp $(HEADERS)
 	$(QUIET_CC) $(CXX) $(CXXFLAGS) $(SHIPFLAGS) $(shell $(LLVM_CONFIG) --cppflags) -c $< -o $@
-%.do: %.cpp julia.h
+%.do: %.cpp $(HEADERS)
 	$(QUIET_CC) $(CXX) $(CXXFLAGS) $(DEBUGFLAGS) $(shell $(LLVM_CONFIG) --cppflags) -c $< -o $@
 
-ast.o ast.do: julia_flisp.boot.inc
+ast.o ast.do: julia_flisp.boot.inc flisp/*.h
 
 julia_flisp.boot.inc: julia_flisp.boot flisp/libflisp.a
 	$(QUIET_FLISP) flisp/flisp ./bin2hex.scm < $< > $@
@@ -70,25 +67,21 @@ support/libsupport.a: support/*.h support/*.c
 flisp/libflisp.a: flisp/*.h flisp/*.c support/libsupport.a
 	$(MAKE) -C flisp
 
-libjulia-debug.$(SHLIB_EXT): julia.expmap $(DOBJS) flisp/libflisp.a support/libsupport.a
+$(USRLIB)/libjulia-debug.$(SHLIB_EXT): julia.expmap $(DOBJS) flisp/libflisp.a support/libsupport.a
 	$(QUIET_LINK) $(CXX) $(DEBUGFLAGS) $(DOBJS) -shared -o $@ $(LIBS) $(LDFLAGS)
-	$(JULIAHOME)/deps/install-name-$(OS).sh $@ $@
-	cp -f $@ $(USRLIB)/$@
+	$(INSTALL_NAME_CMD)libjulia-debug.$(SHLIB_EXT) $@
 libjulia-debug.a: julia.expmap $(DOBJS) flisp/libflisp.a support/libsupport.a
 	rm -f $@
 	$(QUIET_LINK) ar -rcs $@ $(DOBJS)
-	cp -f $@ $(USRLIB)/$@
-libjulia-debug: libjulia-debug.a libjulia-debug.$(SHLIB_EXT)
+libjulia-debug: $(USRLIB)/libjulia-debug.$(SHLIB_EXT)
 
-libjulia-release.$(SHLIB_EXT): julia.expmap $(OBJS) flisp/libflisp.a support/libsupport.a
-	$(QUIET_LINK) $(CXX) $(SHIPFLAGS) $(OBJS) -shared -o $@ $(LIBS) $(LDFLAGS)
-	$(JULIAHOME)/deps/install-name-$(OS).sh $@ $@
-	cp -f $@ $(USRLIB)/$@
+$(USRLIB)/libjulia-release.$(SHLIB_EXT): julia.expmap $(OBJS) flisp/libflisp.a support/libsupport.a
+	$(QUIET_LINK) $(CXX) $(SHIPFLAGS) $(OBJS) $(LIBS) -shared -o $@ $(LDFLAGS)
+	$(INSTALL_NAME_CMD)libjulia-release.$(SHLIB_EXT) $@
 libjulia-release.a: julia.expmap $(OBJS) flisp/libflisp.a support/libsupport.a
 	rm -f $@
 	$(QUIET_LINK) ar -rcs $@ $(OBJS)
-	cp -f $@ $(USRLIB)/$@
-libjulia-release: libjulia-release.a libjulia-release.$(SHLIB_EXT)
+libjulia-release: $(USRLIB)/libjulia-release.$(SHLIB_EXT)
 
 clean:
 	rm -f $(USRLIB)/libjulia*

@@ -318,58 +318,49 @@
 		     defs)))
      (if (null? params)
 	 `(block
+	   (global ,name)
 	   (const ,name)
-	   (= ,name
+	   (composite_type ,name (tuple ,@params) 
+			   (tuple ,@(map (lambda (x) `',x) field-names))
+			   (null) ,super (tuple ,@field-types))
+	   (call
+	    (lambda ()
 	      (scope-block
 	       (block
-		(local ,name)
-		(= ,name
-		   (call (top new_struct_type)
-			 (quote ,name)
-			 (tuple ,@params)
-			 (tuple ,@(map (lambda (x) `',x) field-names))
-			 (null)))
-		(call (top new_struct_fields)
-		      ,name ,super (tuple ,@field-types))
-		,name)))
-	   (scope-block
-	    (block
-	     ,@(map (lambda (c)
-		      (rewrite-ctor c name '() field-names))
-		    defs2)))
+		(global ,name)
+		,@(map (lambda (c)
+			 (rewrite-ctor c name '() field-names))
+		       defs2)))))
 	   (null))
 	 ;; parametric case
 	 `(block
-	   (const ,name)
-	   (= ,name
-	   (call
-	    (lambda (,@params)
-	      (scope-block
-	      (block
-	       (local ,name)
-	       (= ,name
-		  (call (top new_struct_type)
-			(quote ,name)
-			(tuple ,@params)
-			(tuple ,@(map (lambda (x) `',x) field-names))
-			(lambda (,name)
-			  (scope-block
-			   ;; don't capture params; in here they are static
-			   ;; parameters
-			   (block
-			    (global ,@params)
-			    ,@(map (lambda (c)
-				     (rewrite-ctor c name params field-names))
-				   defs2)
-			    ,name)))))
-	       (call (top new_struct_fields)
-		     ,name ,super (tuple ,@field-types))
-	       ,name)))
-	    ,@(symbols->typevars params bounds #f)))
-	   ,@(if (null? defs)
-		 `(,(default-outer-ctor name field-names field-types
-		      params bounds))
-		 '())
+	   (scope-block
+	    (block
+	     (global ,name)
+	     (const ,name)
+	     ,@(map (lambda (v) `(local ,v)) params)
+	     ,@(map make-assignment params (symbols->typevars params bounds #f))
+	     (composite_type ,name (tuple ,@params)
+			     (tuple ,@(map (lambda (x) `',x) field-names))
+			     (lambda (,name)
+			       (scope-block
+				;; don't capture params; in here they are static
+				;; parameters
+				(block
+				 (global ,@params)
+				 ,@(map
+				    (lambda (c)
+				      (rewrite-ctor c name params field-names))
+				    defs2)
+				 ,name)))
+			     ,super (tuple ,@field-types))))
+	   (scope-block
+	    (block
+	     (global ,@params)
+	     ,@(if (null? defs)
+		   `(,(default-outer-ctor name field-names field-types
+			params bounds))
+		   '())))
 	   (null))))))
 
 (define (abstract-type-def-expr name params super)
@@ -378,19 +369,9 @@
    (sparam-name-bounds params '() '())
    `(block
      (const ,name)
-     (= ,name
-	(call
-	 (lambda ,params
-	   (scope-block
-	    (block
-	     (local ,name)
-	     (= ,name
-		(call (top new_tag_type)
-		      (quote ,name) (tuple ,@params)))
-	     (call (top new_tag_type_super) ,name ,super)
-	     ,name)))
-	 ,@(symbols->typevars params bounds #f)))
-     (null))))
+     ,@(map (lambda (v) `(local ,v)) params)
+     ,@(map make-assignment params (symbols->typevars params bounds #f))
+     (abstract_type ,name (tuple ,@params) ,super))))
 
 (define (bits-def-expr n name params super)
   (receive
@@ -398,19 +379,9 @@
    (sparam-name-bounds params '() '())
    `(block
      (const ,name)
-     (= ,name
-	(call
-	 (lambda ,params
-	   (scope-block
-	    (block
-	     (local ,name)
-	     (= ,name
-		(call (top new_bits_type)
-		      (quote ,name) (tuple ,@params) ,n))
-	     (call (top new_tag_type_super) ,name ,super)
-	     ,name)))
-	 ,@(symbols->typevars params bounds #f)))
-     (null))))
+     ,@(map (lambda (v) `(local ,v)) params)
+     ,@(map make-assignment params (symbols->typevars params bounds #f))
+     (bits_type ,name (tuple ,@params) ,n ,super))))
 
 ; take apart a type signature, e.g. T{X} <: S{Y}
 (define (analyze-type-sig ex)
@@ -688,6 +659,27 @@
 
    (pattern-lambda (comparison . chain) (expand-compare-chain chain))
 
+   ;; multiple value assignment a,b = x...
+   (pattern-lambda (= (tuple . lhss) (... x))
+		   (let* ((xx  (if (symbol? x) x (gensy)))
+			  (ini (if (eq? x xx) '() `((= ,xx ,x))))
+			  (st  (gensy)))
+		     (if
+		      (and (pair? x) (eq? (car x) 'tuple))
+		      `(= (tuple ,@lhss) ,x)
+		      `(block
+			,@ini
+			(= ,st (call (top start) ,xx))
+			,.(apply append
+				 (map (lambda (lhs)
+					`((if (call (top done) ,xx ,st)
+					      (call (top throw)
+						    (call (top BoundsError))))
+					  (= (tuple ,lhs ,st)
+					     (call (top next) ,xx ,st))))
+				      lhss))
+			,xx))))
+
    ;; multiple value assignment
    (pattern-lambda (= (tuple . lhss) x)
 		   (if (and (pair? x) (pair? lhss) (eq? (car x) 'tuple)
@@ -951,23 +943,27 @@
    (pattern-lambda (|.'| a) `(call transpose ,a))
 
    ;; transposed multiply
-   (pattern-lambda (call (-/ *) (|'| a) b)
-		   `(call aCb ,a ,b))
+   (pattern-lambda (call (-/ *) (|'| a) (|'| b))   `(call Ac_mul_Bc ,a ,b))
+   (pattern-lambda (call (-/ *) (|.'| a) (|.'| b)) `(call At_mul_Bt ,a ,b))
+   (pattern-lambda (call (-/ *) (|'| a) b)  `(call Ac_mul_B ,a ,b))
+   (pattern-lambda (call (-/ *) a (|'| b))  `(call A_mul_Bc ,a ,b))
+   (pattern-lambda (call (-/ *) (|.'| a) b) `(call At_mul_B ,a ,b))
+   (pattern-lambda (call (-/ *) a (|.'| b)) `(call A_mul_Bt ,a ,b))
 
-   (pattern-lambda (call (-/ *) a (|'| b))
-		   `(call abC ,a ,b))
+   ;; transposed divide
+   (pattern-lambda (call (-/ /) (|'| a) (|'| b))   `(call Ac_rdiv_Bc ,a ,b))
+   (pattern-lambda (call (-/ /) (|.'| a) (|.'| b)) `(call At_rdiv_Bt ,a ,b))
+   (pattern-lambda (call (-/ /) (|'| a) b)  `(call Ac_rdiv_B ,a ,b))
+   (pattern-lambda (call (-/ /) a (|'| b))  `(call A_rdiv_Bc ,a ,b))
+   (pattern-lambda (call (-/ /) (|.'| a) b) `(call At_rdiv_B ,a ,b))
+   (pattern-lambda (call (-/ /) a (|.'| b)) `(call A_rdiv_Bt ,a ,b))
 
-   (pattern-lambda (call (-/ *) (|'| a) (|'| b))
-		   `(call aCbC ,a ,b))
-
-   (pattern-lambda (call (-/ *) (|.'| a) b)
-		   `(call aTb ,a ,b))
-
-   (pattern-lambda (call (-/ *) a (|.'| b))
-		   `(call abT ,a ,b))
-
-   (pattern-lambda (call (-/ *) (|.'| a) (|.'| b))
-		   `(call aTbT ,a ,b))
+   (pattern-lambda (call (-/ \\) (|'| a) (|'| b))   `(call Ac_ldiv_Bc ,a ,b))
+   (pattern-lambda (call (-/ \\) (|.'| a) (|.'| b)) `(call At_ldiv_Bt ,a ,b))
+   (pattern-lambda (call (-/ \\) (|'| a) b)  `(call Ac_ldiv_B ,a ,b))
+   (pattern-lambda (call (-/ \\) a (|'| b))  `(call A_ldiv_Bc ,a ,b))
+   (pattern-lambda (call (-/ \\) (|.'| a) b) `(call At_ldiv_B ,a ,b))
+   (pattern-lambda (call (-/ \\) a (|.'| b)) `(call A_ldiv_Bt ,a ,b))
 
    (pattern-lambda (ccall name RT argtypes . args)
 		   (begin
@@ -977,28 +973,6 @@
 		     (lower-ccall name RT (cdr argtypes) args)))
 
    )) ; patterns
-
-; patterns that verify all syntactic sugar was well-formed
-; if any sugary forms remain after the above patterns, it means the
-; patterns didn't match, which implies a syntax error.
-(define check-desugared
-  (pattern-set
-   (pattern-lambda (function . any)
-		   (error "invalid function definition"))
-
-   (pattern-lambda (for . any)
-		   (error "invalid for loop syntax"))
-
-   (pattern-lambda (type . any)
-		   (error "invalid type definition"))
-
-   (pattern-lambda (typealias . any)
-		   (error "invalid typealias statement"))
-
-   (pattern-lambda (macro . any)
-		   (error "macros must be defined at the top level"))
-
-   ))
 
 ;; Comprehensions
 
@@ -1383,6 +1357,8 @@
 	       (to-lff '(null) dest tail)))
 
 	  (else
+	   (if (and dest (not tail) (eq? (car e) 'method))
+	       (error (string "misplaced method definition for " (cadr e))))
 	   (let ((r (map (lambda (arg) (to-lff arg #t #f))
 			 (cdr e))))
 	     (cond ((symbol? dest)
@@ -1530,11 +1506,16 @@ So far only the second case can actually occur.
 	((quoted? e)      e)
 	(else
 	 (let (; remove vars bound by current expr from rename list
-	       (new-renames (without renames
-				     (case (car e)
-				       ((lambda)      (lam:vars e))
-				       ((scope-block) (declared-local-vars e))
-				       (else '())))))
+	       (new-renames
+		(without renames
+			 (case (car e)
+			   ((lambda)
+			    (append (lambda-all-vars e)
+				    (declared-global-vars (cadddr e))))
+			   ((scope-block)
+			    (append (declared-local-vars e)
+				    (declared-global-vars (cadr e))))
+			   (else '())))))
 	   (cons (car e)
 		 (map (lambda (x)
 			(rename-vars x new-renames))

@@ -1,23 +1,49 @@
 # blas, lapack
+Eps = sqrt(eps())
+
+begin
+local n
 n = 10
 a = rand(n,n)
 asym = a+a'+n*eye(n)
 b = rand(n)
-r = chol(asym)
-@assert sum(r'*r - asym) < 1e-8
-(l,u,p) = lu(a)
-@assert sum(l[p,:]*u - a) < 1e-8
-(q,r,p) = qr(a)
-@assert sum(q*r[:,p] - a) < 1e-8
-(d,v) = eig(asym)
-@assert sum(asym*v[:,1]-d[1]*v[:,1]) < 1e-8
+r = chol(asym)                          # Cholesky decomposition
+@assert norm(r'*r - asym) < Eps
+
+l = chol!(copy(asym), "L")              # lower-triangular Cholesky decomposition
+@assert norm(l*l' - asym) < Eps
+
+(l,u,p) = lu(a)                         # LU decomposition
+@assert norm(l*u - a[p,:]) < Eps
+@assert norm(l[invperm(p),:]*u - a) < Eps
+
+(q,r) = qr(a)                           # QR decomposition
+@assert norm(q*r - a) < Eps
+
+(q,r,p) = qrp(a)                        # pivoted QR decomposition
+@assert norm(q*r - a[:,p]) < Eps
+@assert norm(q*r[:,invperm(p)] - a) < Eps
+
+(d,v) = eig(asym)                       # symmetric eigen-decomposition
+@assert norm(asym*v[:,1]-d[1]*v[:,1]) < Eps
+@assert norm(v*diagmm(d,v') - asym) < Eps
+
 (d,v) = eig(a)
-@assert abs(sum(a*v[:,1]-d[1]*v[:,1])) < 1e-8
-(u,s,vt) = svd(a)
-@assert sum(u*diagm(s)*vt - a) < 1e-8
+for i in 1:size(a,2) @assert norm(a*v[:,i] - d[i]*v[:,i]) < Eps end
+
+(u,s,vt) = svd(a)                       # singular value decomposition
+@assert norm(u*diagmm(s,vt) - a) < Eps
+
+(u,s,vt) = sdd(a)                       # svd using divide-and-conquer
+@assert norm(u*diagmm(s,vt) - a) < Eps
+
 x = a \ b
-@assert sum(a*x-b) < 1e-8
+@assert norm(a*x - b) < Eps
+
 x = triu(a) \ b
-@assert sum(triu(a)*x-b) < 1e-8
+@assert norm(triu(a)*x - b) < Eps
+
 x = tril(a) \ b
-@assert sum(tril(a)*x-b) < 1e-8
+@assert norm(tril(a)*x - b) < Eps
+
+end

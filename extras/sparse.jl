@@ -25,18 +25,18 @@ issparse(S::SparseMatrixCSC) = true
 size(S::SparseMatrixCSC) = (S.m, S.n)
 nnz(S::SparseMatrixCSC) = S.colptr[end]-1
 
-function show(S::SparseMatrixCSC)
-    println(S.m, "x", S.n, " sparse matrix with ", nnz(S), " nonzeros:")
+function show(io, S::SparseMatrixCSC)
+    println(io, S.m, "x", S.n, " sparse matrix with ", nnz(S), " nonzeros:")
 
     half_screen_rows = div(tty_rows() - 8, 2)
     pad = alignment(max(S.m,S.n))[1]
     k = 0
     for col = 1:S.n, k = S.colptr[col] : (S.colptr[col+1]-1)
         if k < half_screen_rows || k > nnz(S)-half_screen_rows
-            println("\t[", rpad(S.rowval[k], pad), ", ", lpad(col, pad), "]  =  ",
-                    showcompact_to_string(S.nzval[k]))
+            println(io, "\t[", rpad(S.rowval[k], pad), ", ", lpad(col, pad), "]  =  ",
+                    sprint(showcompact, S.nzval[k]))
         elseif k == half_screen_rows
-            println("\t."); println("\t."); println("\t.");
+            println(io, "\t."); println(io, "\t."); println(io, "\t.");
         end
         k += 1
     end
@@ -168,7 +168,7 @@ function sparse{Ti<:Union(Int32,Int64)}(I::AbstractVector{Ti}, J::AbstractVector
         if isa(V, AbstractVector); V = V[p]; end
     end
 
-    _jl_make_sparse(I, J, V, m, n, +)
+    _jl_make_sparse(I, J, V, m, n, combine)
 end
 
 # _jl_make_sparse() assumes that I,J are sorted in dictionary order
@@ -224,6 +224,97 @@ function _jl_make_sparse{Ti<:Union(Int32,Int64)}(I::AbstractVector{Ti}, J::Abstr
 
     SparseMatrixCSC(m, n, colptr, I, V)
 end
+
+# Based on http://www.cise.ufl.edu/research/sparse/cholmod/CHOLMOD/Core/cholmod_triplet.c
+function newsparse{Ti<:Union(Int32,Int64),Tv}(I::AbstractVector{Ti}, J::AbstractVector{Ti},
+                                                  V::AbstractVector{Tv},
+                                                  nrow::Int, ncol::Int, combine::Function)
+
+# Work array
+Wj = Array(Ti, max(nrow,ncol)+1)
+
+# Allocate sparse matrix data structure
+# Count entries in each row
+nz = length(I)
+Rnz = zeros(Ti, nrow+1)
+Rnz[1] = 1
+for k=1:nz
+    i = I[k]
+    j = J[k]
+    Rnz[i+1] += 1
+end
+Rp = cumsum(Rnz)
+Ri = Array(Ti, nz)
+Rx = Array(Tv, nz)
+
+# Construct row form
+# place triplet (i,j,x) in column i of R
+
+# Use work array for temporary row pointers
+for i=1:nrow; Wj[i] = Rp[i]; end
+
+for k=1:nz
+    t = I[k]
+    p = Wj[t]
+    Rx[p] = V[k]
+    Ri[p] = J[k]
+    Wj[t] += 1
+end
+
+# Reset work array for use in counting duplicates
+for j=1:ncol; Wj[j] = 0; end
+
+# Sum up duplicates and squeeze
+anz = 0
+for i=1:nrow
+    p1 = Rp[i]
+    p2 = Rp[i+1]
+    pdest = p1
+
+    for p = p1:(p2-1)
+        j = Ri[p]
+        pj = Wj[j]
+        if pj >= p1
+            Rx[pj] = combine (Rx[pj], Rx[p])
+        else
+            Wj[j] = pdest
+            if pdest != p
+                Ri[pdest] = j
+                Rx[pdest] = Rx[p]
+            end
+            pdest += 1
+        end
+    end
+
+    Rnz[i] = pdest - p1
+    anz += (pdest - p1)
+end
+
+# Transpose to get the CSC format
+RiT = Array(Ti, anz)
+RxT = Array(Tv, anz)
+
+# Reset work array to build the final colptr
+Wj[1] = 1
+for i=2:(ncol+1); Wj[i] = 0; end
+for j = 1:nrow, p = Rp[j]:(Rp[j]+Rnz[j]-1)
+    Wj[Ri[p]+1] += 1
+end
+RpT = cumsum(sub(Wj,1:(ncol+1)))
+for i=1:length(RpT); Wj[i] = RpT[i]; end
+
+for j = 1:nrow, p = Rp[j]:(Rp[j]+Rnz[j]-1)
+    ind = Ri[p]
+    q = Wj[ind]
+    Wj[ind] += 1
+    RiT[q] = j
+    RxT[q] = Rx[p]
+end
+
+return SparseMatrixCSC(nrow, ncol, RpT, RiT, RxT)
+
+end
+
 
 function find{Tv,Ti}(S::SparseMatrixCSC{Tv,Ti})
     numnz = nnz(S)
@@ -824,7 +915,7 @@ type SparseAccumulator{Tv,Ti} <: AbstractVector{Tv}
     nvals::Integer
 end
 
-show{T}(S::SparseAccumulator{T}) = invoke(show, (Any,), S)
+show{T}(io, S::SparseAccumulator{T}) = invoke(show, (Any,Any), io, S)
 
 function SparseAccumulator{Tv,Ti}(::Type{Tv}, ::Type{Ti}, s::Integer)
     SparseAccumulator(zeros(Tv,int(s)), falses(int(s)), Array(Ti,int(s)), 0)

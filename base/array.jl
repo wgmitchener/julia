@@ -29,16 +29,17 @@ function copy_to_nocheck{T}(dest::Array{T}, do, src::Array{T}, so, N)
     end
     return dest
 end
-function copy_to{T}(dest::Array{T}, do, src::Array{T}, so, N)
-    if so+N-1 > numel(src) || do+N-1 > numel(dest) || do < 1 || so < 1
+
+function copy_to{T}(dest::Array{T}, dsto, src::Array{T}, so, N)
+    if so+N-1 > numel(src) || dsto+N-1 > numel(dest) || dsto < 1 || so < 1
         throw(BoundsError())
     end
     if isa(T, BitsKind)
         ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
-              pointer(dest, do), pointer(src, so), N*sizeof(T))
+              pointer(dest, dsto), pointer(src, so), N*sizeof(T))
     else
         for i=0:N-1
-            dest[i+do] = src[i+so]
+            dest[i+dsto] = src[i+so]
         end
     end
     return dest
@@ -50,6 +51,14 @@ function reinterpret{T,S}(::Type{T}, a::Array{S,1})
     nel = int(div(numel(a)*sizeof(S),sizeof(T)))
     ccall(:jl_reshape_array, Array{T,1}, (Any, Any, Any), Array{T,1}, a, (nel,))
 end
+
+function reinterpret{T,S}(::Type{T}, a::Array{S})
+    if sizeof(S) != sizeof(T)
+        error("reinterpret: result shape not specified")
+    end
+    reinterpret(T, a, size(a))
+end
+
 function reinterpret{T,S,N}(::Type{T}, a::Array{S}, dims::NTuple{N,Int})
     nel = div(numel(a)*sizeof(S),sizeof(T))
     if prod(dims) != nel
@@ -57,7 +66,7 @@ function reinterpret{T,S,N}(::Type{T}, a::Array{S}, dims::NTuple{N,Int})
     end
     ccall(:jl_reshape_array, Array{T,N}, (Any, Any, Any), Array{T,N}, a, dims)
 end
-reinterpret(t,x) = reinterpret(t,[x])[1]
+reinterpret(t::Type,x) = reinterpret(t,[x])[1]
 
 function reshape{T,N}(a::Array{T}, dims::NTuple{N,Int})
     if prod(dims) != numel(a)
@@ -108,7 +117,7 @@ function fill!{T<:Union(Int8,Uint8)}(a::Array{T}, x::Integer)
 end
 function fill!{T<:Union(Integer,Float)}(a::Array{T}, x)
     if isa(T,BitsKind) && convert(T,x) == 0
-        ccall(:bzero, Void, (Ptr{T}, Int), a, length(a)*sizeof(T))
+        ccall(:memset, Ptr{T}, (Ptr{T}, Int32, Int32), a,0,length(a)*sizeof(T))
     else
         for i = 1:numel(a)
             a[i] = x
@@ -167,7 +176,9 @@ logspace(start::Real, stop::Real) = logspace(start, stop, 50)
 
 ## Conversions ##
 
+convert{T,n}(::Type{Array{T}}, x::Array{T,n}) = x
 convert{T,n}(::Type{Array{T,n}}, x::Array{T,n}) = x
+convert{T,n,S}(::Type{Array{T}}, x::Array{S,n}) = convert(Array{T,n}, x)
 convert{T,n,S}(::Type{Array{T,n}}, x::Array{S,n}) = copy_to(similar(x,T), x)
 
 ## Indexing: iterator implementation ##
@@ -427,6 +438,8 @@ ref(A::Array, I::AbstractArray{Bool}) = _jl_ref_bool_1d(A, I)
 ref(A::Matrix, I::Integer, J::AbstractVector{Bool}) = A[I,find(J)]
 ref(A::Matrix, I::AbstractVector{Bool}, J::Integer) = A[find(I),J]
 ref(A::Matrix, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = A[find(I),find(J)]
+ref{T<:Integer}(A::Matrix, I::AbstractVector{T}, J::AbstractVector{Bool}) = [ A[i,j] for i=I, j=find(J) ]
+ref{T<:Integer}(A::Matrix, I::AbstractVector{Bool}, J::AbstractVector{T}) = [ A[i,j] for i=find(I), j=J ]
 
 ## Indexing: assign ##
 
@@ -607,6 +620,12 @@ assign(A::Matrix, x, I::AbstractVector{Bool}, J::Integer) = (A[find(I),J]=x)
 
 assign(A::Matrix, x::AbstractArray, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = (A[find(I),find(J)]=x)
 assign(A::Matrix, x, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = (A[find(I),find(J)]=x)
+
+assign{T<:Integer}(A::Matrix, x::AbstractArray, I::AbstractVector{T}, J::AbstractVector{Bool}) = (A[I,find(J)]=x)
+assign{T<:Integer}(A::Matrix, x, I::AbstractVector{T}, J::AbstractVector{Bool}) = (A[I,find(J)]=x)
+
+assign{T<:Integer}(A::Matrix, x::AbstractArray, I::AbstractVector{Bool}, J::AbstractVector{T}) = (A[find(I),J]=x)
+assign{T<:Integer}(A::Matrix, x, I::AbstractVector{Bool}, J::AbstractVector{T}) = (A[find(I),J]=x)
 
 ## Dequeue functionality ##
 
@@ -799,7 +818,7 @@ end
 function .^{S<:Integer,T<:Integer}(A::Array{S}, B::Array{T})
     F = Array(Float64, promote_shape(size(A), size(B)))
     for i=1:numel(A)
-        F[i] = A[i]^B[i]
+        F[i] = float64(A[i])^float64(B[i])
     end
     return F
 end
@@ -807,14 +826,14 @@ end
 function .^{T<:Integer}(A::Integer, B::Array{T})
     F = similar(B, Float64)
     for i=1:numel(B)
-        F[i] = A^B[i]
+        F[i] = float64(A)^float64(B[i])
     end
     return F
 end
 
-function _jl_power_array_int_body(F, A, B)
+function _jl_power_array_int_body{T}(F::Array{T}, A, B)
     for i=1:numel(A)
-        F[i] = A[i]^B
+        F[i] = A[i]^convert(T,B)
     end
     return F
 end
@@ -887,40 +906,19 @@ end
 
 ## Binary comparison operators ##
 
-@vectorize_2arg Number (==)
-@vectorize_2arg Number (!=)
-@vectorize_2arg Real (<)
-@vectorize_2arg Real (<=)
-
-for (f,isf) in ((:(==),:isequal), (:(<), :isless))
+for (f,scalarf) in ((:(.==),:(==)), (:.<, :<), (:.!=,:!=), (:.<=,:<=))
     @eval begin
-        function ($f)(A::Array, B::Array)
+        function ($f)(A::AbstractArray, B::AbstractArray)
             F = Array(Bool, promote_shape(size(A),size(B)))
             for i = 1:numel(B)
-                F[i] = ($isf)(A[i], B[i])
+                F[i] = ($scalarf)(A[i], B[i])
             end
             return F
         end
-        ($f)(A, B::Array) =
-            reshape([ ($isf)(A, B[i]) for i=1:length(B)], size(B))
-        ($f)(A::Array, B) =
-            reshape([ ($isf)(A[i], B) for i=1:length(A)], size(A))
-    end
-end
-
-for (f,isf) in ((:(!=),:isequal), (:(<=), :isless))
-    @eval begin
-        function ($f)(A::Array, B::Array)
-            F = Array(Bool, promote_shape(size(A),size(B)))
-            for i = 1:numel(B)
-                F[i] = !($isf)(B[i], A[i])
-            end
-            return F
-        end
-        ($f)(A, B::Array) =
-            reshape([ !($isf)(B[i], A) for i=1:length(B)], size(B))
-        ($f)(A::Array, B) =
-            reshape([ !($isf)(B, A[i]) for i=1:length(A)], size(A))
+        ($f)(A, B::AbstractArray) =
+            reshape([ ($scalarf)(A, B[i]) for i=1:length(B)], size(B))
+        ($f)(A::AbstractArray, B) =
+            reshape([ ($scalarf)(A[i], B) for i=1:length(A)], size(A))
     end
 end
 
@@ -1041,14 +1039,14 @@ function rot180(A::StridedMatrix)
     end
     return B
 end
-function rotl90(A::StridedMatrix, k::Integer)
-    k = k % 4
+function rotl90(A::AbstractMatrix, k::Integer)
+    k = mod(k, 4)
     k == 1 ? rotl90(A) :
     k == 2 ? rot180(A) :
     k == 3 ? rotr90(A) : copy(A)
 end
 rotr90(A::AbstractMatrix, k::Integer) = rotl90(A,-k)
-rot180(A::AbstractMatrix, k::Integer) = k % 2 == 1 ? rot180(A) : copy(A)
+rot180(A::AbstractMatrix, k::Integer) = mod(k, 2) == 1 ? rot180(A) : copy(A)
 const rot90 = rotl90
 
 reverse(v::StridedVector) = (n=length(v); [ v[n-i+1] for i=1:n ])

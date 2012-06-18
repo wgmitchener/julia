@@ -1,9 +1,3 @@
-# shell
-
-ls() = system("ls")
-
-catfile(file::String) = system(strcat("cat ", file))
-
 # timing
 
 time() = ccall(:clock_now, Float64, ())
@@ -63,7 +57,7 @@ function peakflops()
     floprate
 end
 
-# source files, editing
+# source files, editing, function reflection
 
 function function_loc(f::Function, types)
     for m = getmethods(f, types)
@@ -152,6 +146,19 @@ edit(f::Function, t) = edit(function_loc(f,t)...)
 less(f::Function)    = less(function_loc(f)...)
 less(f::Function, t) = less(function_loc(f,t)...)
 
+function disassemble(f::Function, types)
+    ccall(:jl_dump_function, Any, (Any,Any), f, types)::ByteString
+end
+
+function methods(f::Function)
+    if !isgeneric(f)
+        error("methods: error: not a generic function")
+    end
+    f.env
+end
+
+methods(t::CompositeKind) = t.env
+
 # remote/parallel load
 
 include_string(txt::ByteString) = ccall(:jl_load_file_string, Void, (Ptr{Uint8},), txt)
@@ -191,6 +198,7 @@ local load_dict = {}
 global load, remote_load
 
 load(fname::String) = load(cstring(fname))
+load(f::String, fs::String...) = (load(f); for x in fs load(x); end)
 function load(fname::ByteString)
     if in_load
         path = find_in_path(fname)
@@ -241,57 +249,29 @@ end
 
 # help
 
-function parse_help(stream)
-    helpdb = Dict()
-    for l = each_line(stream)
-        if isempty(l)
-            continue
-        end
-        if length(l) >= 3 && l[1:3]=="## "
-            heading = l[4:end-1]
-            category = Dict()
-            helpdb[heading] = category
-            continue
-        end
-        if l[1]=='`'
-            parts = split(l, '—')
-            sig = parts[1][2:end-2]
-            if length(parts) > 1
-                desc = parts[2]
-            else
-                desc = ""
-            end
-            m = match(r"(\w+!?)\(", sig)
-            if m != nothing
-                # found something of the form "f("
-                funcname = m.captures[1]
-            else
-                # otherwise use whatever's between the ``
-                funcname = sig
-            end
-            entry = (sig, desc)
-            if has(category,funcname)
-                push(category[funcname], entry)
-            else
-                category[funcname] = {entry}
-            end
-        end
-    end
-    helpdb
-end
-
-_jl_helpdb = nothing
-
-const _jl_help_url = "https://raw.github.com/JuliaLang/julialang.github.com/master/manual/standard-library-reference/index.md"
+_jl_help_category_list = nothing
+_jl_help_category_dict = nothing
+_jl_help_function_dict = nothing
 
 function _jl_init_help()
-    global _jl_helpdb
-    if _jl_helpdb == nothing
-        println("Downloading help data...")
-        cmd = `curl -s $_jl_help_url`
-        stream = fdio(read_from(cmd).fd, true)
-        spawn(cmd)
-        _jl_helpdb = parse_help(stream)
+    global _jl_help_category_list, _jl_help_category_dict, _jl_help_function_dict
+    if _jl_help_category_dict == nothing
+        println("Loading help data...")
+        load("$JULIA_HOME/../lib/julia/helpdb.jl")
+        _jl_help_category_list = {}
+        _jl_help_category_dict = Dict()
+        _jl_help_function_dict = Dict()
+        for (cat,func,desc) in _jl_help_db()
+            if !has(_jl_help_category_dict, cat)
+                push(_jl_help_category_list, cat)
+                _jl_help_category_dict[cat] = {}
+            end
+            push(_jl_help_category_dict[cat], func)
+            if !has(_jl_help_function_dict, func)
+                _jl_help_function_dict[func] = {}
+            end
+            push(_jl_help_function_dict[func], desc)
+        end
     end
 end
 
@@ -307,8 +287,8 @@ function help()
  for one of the following categories:
 
 ")
-    for (cat, tabl) = _jl_helpdb
-        if !isempty(tabl)
+    for cat = _jl_help_category_list
+        if !isempty(_jl_help_category_dict[cat])
             print("  ")
             show(cat); println()
         end
@@ -317,12 +297,12 @@ end
 
 function help(cat::String)
     _jl_init_help()
-    if !has(_jl_helpdb, cat)
+    if !has(_jl_help_category_dict, cat)
         # if it's not a category, try another named thing
         return help_for(cat)
     end
     println("Help is available for the following items:")
-    for (func, _) = _jl_helpdb[cat]
+    for func = _jl_help_category_dict[cat]
         print(func, " ")
     end
     println()
@@ -334,7 +314,7 @@ function _jl_print_help_entries(entries)
         if !first
             println()
         end
-        print(desc[1], "\n ", desc[2])
+        println(strip(desc))
         first = false
     end
 end
@@ -342,17 +322,9 @@ end
 help_for(s::String) = help_for(s, 0)
 function help_for(fname::String, obj)
     _jl_init_help()
-    n = 0
-    for (cat, tabl) = _jl_helpdb
-        for (func, entries) = tabl
-            if func == fname
-                _jl_print_help_entries(entries)
-                n+=1
-                break
-            end
-        end
-    end
-    if n == 0
+    if has(_jl_help_function_dict, fname)
+        _jl_print_help_entries(_jl_help_function_dict[fname])
+    else
         if isgeneric(obj)
             repl_show(obj); println()
         else
@@ -366,23 +338,20 @@ function apropos(txt::String)
     n = 0
     r = Regex("\\Q$txt", PCRE_CASELESS)
     first = true
-    for (cat, tabl) = _jl_helpdb
+    for (cat, _) in _jl_help_category_dict
         if matches(r, cat)
             println("Category: \"$cat\"")
             first = false
         end
     end
-    for (cat, tabl) = _jl_helpdb
-        for (func, entries) = tabl
-            if matches(r, func) || anyp(e->(matches(r,e[1]) || matches(r,e[2])),
-                                        entries)
-                if !first
-                    println()
-                end
-                _jl_print_help_entries(entries)
-                first = false
-                n+=1
+    for (func, entries) in _jl_help_function_dict
+        if matches(r, func) || anyp(e->matches(r,e), entries)
+            if !first
+                println()
             end
+            _jl_print_help_entries(entries)
+            first = false
+            n+=1
         end
     end
     if n == 0
@@ -407,19 +376,3 @@ function help(x)
         println("  which has fields $(t.names)")
     end
 end
-
-# run some code in a different directory
-function chdir(f::Function, dir::String)
-    old = getcwd()
-    try
-        setcwd(dir)
-        res = f()
-        setcwd(old)
-        res
-    catch err
-        setcwd(old)
-        throw(err)
-    end
-end
-
-macro chdir(dir,ex); :(chdir(()->$ex,$dir)); end

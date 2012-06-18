@@ -70,6 +70,9 @@ reshape(a::AbstractArray, dims::Int...) = reshape(a, dims)
 
 vec(a::AbstractArray) = reshape(a,max(size(a)))
 
+rowvec{T}(a::AbstractArray{T,2}, i::Int) = vec(a[i,:])
+colvec{T}(a::AbstractArray{T,2}, i::Int) = vec(a[:,i])
+
 function squeeze(A::AbstractArray)
     d = ()
     for i = size(A)
@@ -302,6 +305,7 @@ end
 # 1-d indexing is assumed defined on subtypes
 assign(t::AbstractArray, x, i::Integer) =
     error("assign not defined for ",typeof(t))
+assign(t::AbstractArray, x) = throw(MethodError(assign, (t, x)))
 
 assign(t::AbstractArray, x, i::Real)          = (t[iround(i)] = x)
 assign(t::AbstractArray, x, i::Real, j::Real) = (t[iround(i),iround(j)] = x)
@@ -640,6 +644,37 @@ function isless(A::AbstractArray, B::AbstractArray)
     end
     return nA < nB
 end
+
+function (==)(A::AbstractArray, B::AbstractArray)
+    if size(A) != size(B)
+        return false
+    end
+    for i = 1:numel(A)
+        if !(A[i]==B[i])
+            return false
+        end
+    end
+    return true
+end
+
+function (!=)(A::AbstractArray, B::AbstractArray)
+    if size(A) != size(B)
+        return true
+    end
+    for i = 1:numel(A)
+        if A[i]!=B[i]
+            return true
+        end
+    end
+    return false
+end
+
+(<)(A::AbstractArray, B::AbstractArray) =
+    error("< not defined for arrays. Try .< or isless.")
+
+(==)(A::AbstractArray, B) = error("Not defined. Try .== or isequal.")
+
+(==)(A, B::AbstractArray) = error("Not defined. Try .== or isequal.")
 
 for (f, op) = ((:cumsum, :+), (:cumprod, :*) )
     @eval function ($f)(v::AbstractVector)

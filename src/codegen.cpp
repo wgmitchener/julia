@@ -1,3 +1,7 @@
+#ifndef __STDC_LIMIT_MACROS
+#define __STDC_LIMIT_MACROS
+#define __STDC_CONSTANT_MACROS
+#endif
 #include "llvm/DerivedTypes.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/JIT.h"
@@ -14,6 +18,8 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Support/IRBuilder.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Config/llvm-config.h"
 #include <setjmp.h>
 #include <string>
 #include <sstream>
@@ -38,6 +44,9 @@ static IRBuilder<> builder(getGlobalContext());
 static bool nested_compile=false;
 static Module *jl_Module;
 static ExecutionEngine *jl_ExecutionEngine;
+#if LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR >= 1
+static TargetMachine *jl_TargetMachine;
+#endif
 static DIBuilder *dbuilder;
 static std::map<int, std::string> argNumberStrings;
 static FunctionPassManager *FPM;
@@ -85,13 +94,16 @@ static GlobalVariable *jlfloat32temp_var;
 static GlobalVariable *jlpgcstack_var;
 #endif
 static GlobalVariable *jlexc_var;
+static GlobalVariable *jldiverr_var;
+static GlobalVariable *jlundeferr_var;
+static GlobalVariable *jldomerr_var;
+static GlobalVariable *jlovferr_var;
+static GlobalVariable *jlinexacterr_var;
 
 // important functions
 static Function *jlnew_func;
 static Function *jlraise_func;
 static Function *jlerror_func;
-static Function *jluniniterror_func;
-static Function *jldiverror_func;
 static Function *jltypeerror_func;
 static Function *jlcheckassign_func;
 static Function *jldeclareconst_func;
@@ -103,6 +115,7 @@ static Function *jlclosure_func;
 static Function *jlmethod_func;
 static Function *jlenter_func;
 static Function *jlleave_func;
+static Function *jlegal_func;
 static Function *jlallocobj_func;
 static Function *jlalloc2w_func;
 static Function *jlalloc3w_func;
@@ -143,7 +156,8 @@ static Function *to_function(jl_lambda_info_t *li)
     Function *f = Function::Create(jl_func_sig, Function::ExternalLinkage,
                                    li->name->name, jl_Module);
     assert(!li->inInference);
-    li->functionObject = (void*)f;
+    if (li->functionObject == NULL)
+        li->functionObject = (void*)f;
     BasicBlock *old = nested_compile ? builder.GetInsertBlock() : NULL;
     DebugLoc olddl = builder.getCurrentDebugLocation();
     bool last_n_c = nested_compile;
@@ -191,15 +205,38 @@ extern "C" void jl_compile(jl_function_t *f)
     }
 }
 
-extern "C" void jl_delete_function(jl_lambda_info_t *li)
+extern "C" jl_function_t *jl_get_specialization(jl_function_t *f, jl_tuple_t *types);
+
+extern "C" DLLEXPORT
+const jl_value_t *jl_dump_function(jl_function_t *f, jl_tuple_t *types)
 {
-    // NOTE: this is not safe; there might be closures using this code.
-    Function *llvmf = (Function*)li->functionObject;
-    if (llvmf) {
-        delete llvmf;
-        li->functionObject = NULL;
-        li->fptr = &jl_trampoline;
+    if (!jl_is_function(f) || !jl_is_gf(f))
+        return jl_cstr_to_string((char*)"");
+    jl_function_t *sf = jl_get_specialization(f, types);
+    if (sf == NULL || sf->linfo == NULL) {
+        sf = jl_method_lookup_by_type(jl_gf_mtable(f), types, 0);
+        if (sf == jl_bottom_func)
+            return jl_cstr_to_string((char*)"");
+        ios_printf(ios_stderr,
+                   "Warning: Returned code may not match what actually runs.\n");
     }
+    std::string code;
+    llvm::raw_string_ostream stream(code);
+    Function *llvmf;
+    if (sf->linfo->functionObject == NULL) {
+        jl_compile(sf);
+        llvmf = (Function*)sf->linfo->functionObject;
+    }
+    else {
+        if (sf->fptr == &jl_trampoline) {
+            llvmf = (Function*)sf->linfo->functionObject;
+        }
+        else {
+            llvmf = to_function(sf->linfo);
+        }
+    }
+    llvmf->print(stream);
+    return jl_cstr_to_string((char*)stream.str().c_str());
 }
 
 // information about the context of a piece of code: its enclosing
@@ -491,8 +528,6 @@ static jl_tuple_t *call_arg_types(jl_value_t **args, size_t n, jl_codectx_t *ctx
     return t;
 }
 
-extern "C" jl_function_t *jl_get_specialization(jl_function_t *f, jl_tuple_t *types);
-
 static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
                               jl_codectx_t *ctx,
                               Value **theFptr, Value **theF,
@@ -518,7 +553,7 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
             if (aty != NULL) {
                 /*
                   if (trace) {
-                      ios_printf(ios_stdout, "call %s%s\n",
+                      JL_PRINTF(JL_STDOUT, "call %s%s\n",
                       jl_sprint(args[0]),
                       jl_sprint((jl_value_t*)aty));
                   }
@@ -534,7 +569,7 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
     }
     else if (f->fptr == &jl_f_is && nargs==2) {
         jl_value_t *rt1 = expr_type(args[1], ctx);
-        jl_value_t *rt2  = expr_type(args[2], ctx);
+        jl_value_t *rt2 = expr_type(args[2], ctx);
         if (jl_is_type_type(rt1) && jl_is_type_type(rt2) &&
             !jl_is_typevar(jl_tparam0(rt1)) &&
             !jl_is_typevar(jl_tparam0(rt2)) &&
@@ -545,9 +580,24 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
             return ConstantInt::get(T_int1, 0);
         }
         JL_GC_POP();
-        Value *arg1 = boxed(emit_expr(args[1], ctx));
-        Value *arg2 = boxed(emit_expr(args[2], ctx));
-        return builder.CreateICmpEQ(arg1, arg2);
+        int ptr_comparable = 0;
+        if (rt1==(jl_value_t*)jl_sym_type || rt2==(jl_value_t*)jl_sym_type ||
+            jl_is_struct_type(rt1) || jl_is_struct_type(rt2))
+            ptr_comparable = 1;
+        Value *arg1 = emit_expr(args[1], ctx);
+        Value *arg2 = emit_expr(args[2], ctx);
+        if (arg1->getType() != jl_pvalue_llvmt &&
+            arg2->getType() != jl_pvalue_llvmt) {
+            if (julia_type_of(arg1) != julia_type_of(arg2)) {
+                return ConstantInt::get(T_int1, 0);
+            }
+            return builder.CreateICmpEQ(JL_INT(arg1),JL_INT(arg2));
+        }
+        arg1 = boxed(arg1); arg2 = boxed(arg2);
+        if (ptr_comparable)
+            return builder.CreateICmpEQ(arg1, arg2);
+        else
+            return builder.CreateTrunc(builder.CreateCall2(jlegal_func, arg1, arg2), T_int1);
     }
     else if (f->fptr == &jl_f_typeof && nargs==1) {
         jl_value_t *aty = expr_type(args[1], ctx); rt1 = aty;
@@ -1207,10 +1257,11 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
     }
     jl_expr_t *ex = (jl_expr_t*)expr;
     jl_value_t **args = &jl_cellref(ex->args,0);
+    jl_sym_t *head = ex->head;
     // this is object-disoriented.
     // however, this is a good way to do it because it should *not* be easy
     // to add new node types.
-    if (ex->head == goto_ifnot_sym) {
+    if (head == goto_ifnot_sym) {
         jl_value_t *cond = args[0];
         int labelname = jl_unbox_long(args[1]);
         Value *condV = emit_unboxed(cond, ctx);
@@ -1239,17 +1290,17 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
         builder.SetInsertPoint(ifso);
     }
 
-    else if (ex->head == call_sym || ex->head == call1_sym) {
+    else if (head == call_sym || head == call1_sym) {
         return emit_call(args, ex->args->length, ctx, (jl_value_t*)ex);
     }
 
-    else if (ex->head == assign_sym) {
+    else if (head == assign_sym) {
         emit_assignment(args[0], args[1], ctx);
         if (valuepos) {
             return literal_pointer_val((jl_value_t*)jl_nothing);
         }
     }
-    else if (ex->head == method_sym) {
+    else if (head == method_sym) {
         jl_value_t *mn;
         if (jl_is_symbolnode(args[0])) {
             mn = (jl_value_t*)jl_symbolnode_sym(args[0]);
@@ -1274,7 +1325,7 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
         ctx->argDepth = last_depth;
         return literal_pointer_val((jl_value_t*)jl_nothing);
     }
-    else if (ex->head == const_sym) {
+    else if (head == const_sym) {
         jl_sym_t *sym = (jl_sym_t*)args[0];
         jl_binding_t *bnd = NULL;
         (void)var_binding_pointer(sym, &bnd, true, ctx);
@@ -1284,10 +1335,10 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
         }
     }
 
-    else if (ex->head == null_sym) {
+    else if (head == null_sym) {
         return literal_pointer_val((jl_value_t*)jl_nothing);
     }
-    else if (ex->head == static_typeof_sym) {
+    else if (head == static_typeof_sym) {
         jl_value_t *extype = expr_type((jl_value_t*)ex, ctx);
         if (jl_is_type_type(extype)) {
             extype = jl_tparam0(extype);
@@ -1299,7 +1350,7 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
         }
         return literal_pointer_val(extype);
     }
-    else if (ex->head == new_sym) {
+    else if (head == new_sym) {
         jl_value_t *ty = expr_type(args[0], ctx);
         if (jl_is_type_type(ty) &&
             jl_is_struct_type(jl_tparam0(ty)) &&
@@ -1328,15 +1379,15 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
         Value *typ = emit_expr(args[0], ctx);
         return builder.CreateCall(jlnew_func, typ);
     }
-    else if (ex->head == exc_sym) {
+    else if (head == exc_sym) {
         return builder.CreateLoad(jlexc_var, true);
     }
-    else if (ex->head == leave_sym) {
+    else if (head == leave_sym) {
         assert(jl_is_long(args[0]));
         builder.CreateCall(jlleave_func,
                            ConstantInt::get(T_int32, jl_unbox_long(args[0])));
     }
-    else if (ex->head == enter_sym) {
+    else if (head == enter_sym) {
         assert(jl_is_long(args[0]));
         int labl = jl_unbox_long(args[0]);
         Value *jbuf = builder.CreateGEP((*ctx->jmpbufs)[labl],
@@ -1354,11 +1405,14 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
         builder.CreateCondBr(isz, tryblk, handlr);
         builder.SetInsertPoint(tryblk);
     }
-    if (!strcmp(ex->head->name, "$")) {
-        jl_error("syntax error: prefix $ outside of quote block");
-    }
-    if (valuepos) {
-        jl_errorf("unsupported expression type %s", ex->head->name);
+    else {
+        if (!strcmp(head->name, "$"))
+            jl_error("syntax error: prefix $ outside of quote block");
+        // some expression types are metadata and can be ignored
+        if (valuepos || !(head == line_sym || head == multivalue_sym)) {
+            jl_errorf("unsupported or misplaced expression %s in function %s",
+                      head->name, ctx->linfo->name->name);
+        }
     }
     return NULL;
 }
@@ -1412,8 +1466,8 @@ static void emit_function(jl_lambda_info_t *lam, Function *f)
     }
     assert(jl_is_expr(ast));
     sparams = jl_tuple_tvars_to_symbols(lam->sparams);
-    //jl_print((jl_value_t*)ast);
-    //ios_printf(ios_stdout, "\n");
+    //JL_PRINTF((jl_value_t*)ast);
+    //JL_PRINTF(JL_STDOUT, "\n");
     BasicBlock *b0 = BasicBlock::Create(jl_LLVMContext, "top", f);
     builder.SetInsertPoint(b0);
     std::map<std::string, Value*> localVars;
@@ -1471,8 +1525,9 @@ static void emit_function(jl_lambda_info_t *lam, Function *f)
             filename = ((jl_sym_t*)jl_exprarg(stmt, 1))->name;
         }
     }
-    
-    dbuilder->createCompileUnit(0, filename, ".", "julia", true, "", 0);
+	
+    // TODO: Fix when moving to new LLVM version
+    dbuilder->createCompileUnit(0x01, filename, ".", "julia", true, "", 0); 
     llvm::DIArray EltTypeArray = dbuilder->getOrCreateArray(ArrayRef<Value*>());
     DIFile fil = dbuilder->createFile(filename, ".");
     DISubprogram SP =
@@ -1901,6 +1956,16 @@ static void init_julia_llvm_env(Module *m)
     jlnull_var = global_to_llvm("jl_null", (void*)&jl_null);
     jlexc_var = global_to_llvm("jl_exception_in_transit",
                                (void*)&jl_exception_in_transit);
+    jldiverr_var = global_to_llvm("jl_divbyzero_exception",
+                                  (void*)&jl_divbyzero_exception);
+    jlundeferr_var = global_to_llvm("jl_undefref_exception",
+                                    (void*)&jl_undefref_exception);
+    jldomerr_var = global_to_llvm("jl_domain_exception",
+                                  (void*)&jl_domain_exception);
+    jlovferr_var = global_to_llvm("jl_overflow_exception",
+                                  (void*)&jl_overflow_exception);
+    jlinexacterr_var = global_to_llvm("jl_inexact_exception",
+                                      (void*)&jl_inexact_exception);
     jlfloat32temp_var =
         new GlobalVariable(*jl_Module, T_float32,
                            false, GlobalVariable::PrivateLinkage,
@@ -1932,22 +1997,6 @@ static void init_julia_llvm_env(Module *m)
                                          (void*)&jl_new_struct_uninit);
 
     std::vector<Type*> empty_args(0);
-    jluniniterror_func =
-        Function::Create(FunctionType::get(T_void, empty_args, false),
-                         Function::ExternalLinkage,
-                         "jl_undef_ref_error", jl_Module);
-    jluniniterror_func->setDoesNotReturn();
-    jl_ExecutionEngine->addGlobalMapping(jluniniterror_func,
-                                         (void*)&jl_undef_ref_error);
-
-    jldiverror_func =
-        Function::Create(FunctionType::get(T_void, empty_args, false),
-                         Function::ExternalLinkage,
-                         "jl_divide_by_zero_error", jl_Module);
-    jldiverror_func->setDoesNotReturn();
-    jl_ExecutionEngine->addGlobalMapping(jldiverror_func,
-                                         (void*)&jl_divide_by_zero_error);
-
     setjmp_func =
         Function::Create(FunctionType::get(T_int32, args1, false),
                          Function::ExternalLinkage, "_setjmp", jl_Module);
@@ -2046,6 +2095,15 @@ static void init_julia_llvm_env(Module *m)
                          "jl_pop_handler", jl_Module);
     jl_ExecutionEngine->addGlobalMapping(jlleave_func, (void*)&jl_pop_handler);
 
+    std::vector<Type *> args_2vals(0);
+    args_2vals.push_back(jl_pvalue_llvmt);
+    args_2vals.push_back(jl_pvalue_llvmt);
+    jlegal_func =
+        Function::Create(FunctionType::get(T_int32, args_2vals, false),
+                         Function::ExternalLinkage,
+                         "jl_egal", jl_Module);
+    jl_ExecutionEngine->addGlobalMapping(jlegal_func, (void*)&jl_egal);
+
     std::vector<Type*> aoargs(0);
     aoargs.push_back(T_size);
     jlallocobj_func =
@@ -2114,16 +2172,28 @@ static void init_julia_llvm_env(Module *m)
 
 extern "C" void jl_init_codegen(void)
 {
+    
+    InitializeNativeTarget();
+    jl_Module = new Module("julia", jl_LLVMContext);
+
+
+#if !defined(LLVM_VERSION_MAJOR) || (LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR == 0)
+    jl_ExecutionEngine = EngineBuilder(jl_Module).setEngineKind(EngineKind::JIT).create();
 #ifdef DEBUG
     llvm::JITEmitDebugInfo = true;
 #endif
     llvm::NoFramePointerElim = true;
     llvm::NoFramePointerElimNonLeaf = true;
-
-    InitializeNativeTarget();
-    jl_Module = new Module("julia", jl_LLVMContext);
-    jl_ExecutionEngine =
-        EngineBuilder(jl_Module).setEngineKind(EngineKind::JIT).create();
+#elif LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR >= 1
+    EngineBuilder builder = EngineBuilder(jl_Module).setEngineKind(EngineKind::JIT);
+    jl_ExecutionEngine = builder.create(jl_TargetMachine=builder.selectTarget());
+#ifdef DEBUG
+    jl_TargetMachine->Options.JITEmitDebugInfo = true;
+#endif 
+    jl_TargetMachine->Options.NoFramePointerElim = true;
+    jl_TargetMachine->Options.NoFramePointerElimNonLeaf = true;
+#endif
+    
     dbuilder = new DIBuilder(*jl_Module);
 
     init_julia_llvm_env(jl_Module);

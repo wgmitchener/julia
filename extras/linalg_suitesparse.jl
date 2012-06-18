@@ -40,20 +40,46 @@ function _jl_sparse_cholsolve{Tv<:Union(Float64,Complex128), Ti<:Union(Int64,Int
     return sol
 end
 
+## Sparse LU Factorization Objects
 
-function _jl_sparse_lusolve(S, b)
+# Wrapper for memory allocated by umfpack. Carry along the value and index types.
+type UmfpackPtr{Tv<:Union(Float64,Complex128),Ti<:Union(Int64,Int32)}
+    val::Vector{Ptr{Void}} 
+end
 
-    S = _jl_convert_to_0_based_indexing!(S)
-    x = []
+type SparseLU{Tv<:Union(Float64,Complex128),Ti<:Union(Int64,Int32)} <: Factorization{Tv}
+    numeric::UmfpackPtr{Tv,Ti}
+    mat::SparseMatrixCSC{Tv,Ti}
+end
+
+function show(io, f::SparseLU)
+    printf("UMFPACK LU Factorization of a %d-by-%d sparse matrix\n",
+           size(f.mat,1), size(f.mat,2))
+    println(f.numeric)
+    _jl_umfpack_report(f)
+end
+
+type SparseLUTrans{Tv<:Union(Float64,Complex128),Ti<:Union(Int64,Int32)} <: Factorization{Tv}
+    numeric::UmfpackPtr{Tv,Ti}
+    mat::SparseMatrixCSC{Tv,Ti}
+end
+
+function show(io, f::SparseLUTrans)
+    printf("UMFPACK LU Factorization of a transposed %d-by-%d sparse matrix\n",
+           size(f.mat,1), size(f.mat,2))
+    println(f.numeric)
+    _jl_umfpack_report(f)
+end
+
+function SparseLU{Tv<:Union(Float64,Complex128),Ti<:Union(Int64,Int32)}(S::SparseMatrixCSC{Tv,Ti})
+    Scopy = copy(S) 
+    Scopy = _jl_convert_to_0_based_indexing!(Scopy)
+    numeric = []
 
     try
-        symbolic = _jl_umfpack_symbolic(S)
-        numeric = _jl_umfpack_numeric(S, symbolic)
-        _jl_umfpack_free_symbolic(S, symbolic)
-        x = _jl_umfpack_solve(S, b, numeric)
-        _jl_umfpack_free_numeric(S, numeric)
+        symbolic = _jl_umfpack_symbolic(Scopy)
+        numeric = _jl_umfpack_numeric(Scopy, symbolic)
     catch e
-        S = _jl_convert_to_1_based_indexing!(S)
         if is(e,MatrixIllConditionedException)
             error("Input matrix is ill conditioned or singular");
         else
@@ -61,17 +87,53 @@ function _jl_sparse_lusolve(S, b)
         end
     end
     
-    S = _jl_convert_to_1_based_indexing!(S)
-    return x
+    return SparseLU(numeric,Scopy) 
 end
 
+function SparseLU!{Tv<:Union(Float64,Complex128),Ti<:Union(Int64,Int32)}(S::SparseMatrixCSC{Tv,Ti})
+    Sshallow = SparseMatrixCSC(S.m,S.n,S.colptr,S.rowval,S.nzval)
+    Sshallow = _jl_convert_to_0_based_indexing!(Sshallow)
+    numeric = []
 
-function (\){Tv<:Union(Float64,Complex128),
-             Ti<:Union(Int64,Int32)}(S::SparseMatrixCSC{Tv,Ti}, b::Vector{Tv})
-    return _jl_sparse_lusolve(S, b)
+    try
+        symbolic = _jl_umfpack_symbolic(Sshallow)
+        numeric = _jl_umfpack_numeric(Sshallow, symbolic)
+    catch e
+        Sshallow = _jl_convert_to_1_based_indexing!(Sshallow)
+        if is(e,MatrixIllConditionedException)
+            error("Input matrix is ill conditioned or singular");
+        else
+            error("Error calling UMFPACK")
+        end
+    end
+
+    S.rowval = []
+    S.nzval = []
+    S.colptr = ones(S.n+1)
+    
+    return SparseLU(numeric,Sshallow)
 end
 
-(\){T}(S::SparseMatrixCSC{T}, b::Vector) = S \ convert(Array{T,1}, b)
+function SparseLUTrans(S::SparseMatrixCSC) 
+    x = SparseLU(S)
+    return SparseLUTrans(x.numeric, x.mat)
+end
+
+# Solve with Factorization
+
+(\){T}(fact::SparseLU{T}, b::Vector) = fact \ convert(Array{T,1}, b)
+(\){T}(fact::SparseLU{T}, b::Vector{T}) = _jl_umfpack_solve(fact.mat,b,fact.numeric)
+
+(\){T}(fact::SparseLUTrans{T}, b::Vector) = fact \ convert(Array{T,1}, b)
+(\){T}(fact::SparseLUTrans{T}, b::Vector{T}) = _jl_umfpack_transpose_solve(fact.mat,b,fact.numeric)
+
+ctranspose(fact::SparseLU) = SparseLUTrans(fact.numeric, fact.mat)
+
+# Solve directly with matrix
+
+(\)(S::SparseMatrixCSC, b::Vector) = SparseLU(S) \ b
+At_ldiv_B(S::SparseMatrixCSC, b::Vector) = SparseLUTrans(S) \ b
+Ac_ldiv_B(S::SparseMatrixCSC, b::Vector) = SparseLUTrans(S) \ b
 
 ## Library code
 
@@ -146,7 +208,7 @@ const _jl_CHOLMOD_SUPERNODAL = int32(2)    # always do supernodal
 function _jl_cholmod_start()
     # Allocate space for cholmod_common object
     cm = Array(Ptr{Void}, 1)
-    ccall(dlsym(_jl_libcholmod_wrapper, :jl_cholmod_common),
+    ccall(dlsym(_jl_libsuitesparse_wrapper, :jl_cholmod_common),
           Void,
           (Ptr{Void},),
           cm)
@@ -183,7 +245,7 @@ function _jl_cholmod_sparse{Tv,Ti}(S::SparseMatrixCSC{Tv,Ti}, stype::Int)
     if     Tv == Float64 || Tv == Complex128; dtype = _jl_CHOLMOD_DOUBLE; 
     elseif Tv == Float32 || Tv == Complex64 ; dtype = _jl_CHOLMOD_SINGLE; end
 
-    ccall(dlsym(_jl_libcholmod_wrapper, :jl_cholmod_sparse),
+    ccall(dlsym(_jl_libsuitesparse_wrapper, :jl_cholmod_sparse),
           Ptr{Void},
           (Ptr{Void}, Int, Int, Int, Ptr{Void}, Ptr{Void}, Ptr{Void}, Ptr{Void}, Ptr{Void},
            Int32, Int32, Int32, Int32, Int32, Int32),
@@ -207,7 +269,7 @@ function _jl_cholmod_dense{T}(B::VecOrMat{T})
     if     T == Float64 || T == Complex128; dtype = _jl_CHOLMOD_DOUBLE; 
     elseif T == Float32 || T == Complex64 ; dtype = _jl_CHOLMOD_SINGLE; end
 
-    ccall(dlsym(_jl_libcholmod_wrapper, :jl_cholmod_dense),
+    ccall(dlsym(_jl_libsuitesparse_wrapper, :jl_cholmod_dense),
           Ptr{Void},
           (Ptr{Void}, Int, Int, Int, Int, Ptr{T}, Ptr{Void}, Int32, Int32),
           cd, m, n, numel(B), m, B, C_NULL, xtype, dtype
@@ -217,7 +279,7 @@ function _jl_cholmod_dense{T}(B::VecOrMat{T})
 end
 
 function _jl_cholmod_dense_copy_out{T}(x::Ptr{Void}, sol::VecOrMat{T})
-    ccall(dlsym(_jl_libcholmod_wrapper, :jl_cholmod_dense_copy_out),
+    ccall(dlsym(_jl_libsuitesparse_wrapper, :jl_cholmod_dense_copy_out),
           Void,
           (Ptr{Void}, Ptr{T}),
           x, sol
@@ -296,6 +358,7 @@ const _jl_UMFPACK_Uat   =  14    # U.'x=b
 ## Sizes of Control and Info arrays for returning information from solver
 const _jl_UMFPACK_INFO = 90
 const _jl_UMFPACK_CONTROL = 20
+const _jl_UMFPACK_PRL = 1
 
 ## Status codes
 const _jl_UMFPACK_OK = 0
@@ -337,29 +400,31 @@ for (f_sym_r, f_sym_c, inttype) in
 
         function _jl_umfpack_symbolic{Tv<:Float64,Ti<:$inttype}(S::SparseMatrixCSC{Tv,Ti})
             # Pointer to store the symbolic factorization returned by UMFPACK
-            Symbolic = Array(Ptr{Void}, 1)
+            Symbolic = UmfpackPtr{Tv,Ti}(Array(Ptr{Void},1))
             status = ccall(dlsym(_jl_libumfpack, $f_sym_r),
                            Ti,
                            (Ti, Ti, 
                             Ptr{Ti}, Ptr{Ti}, Ptr{Float64}, Ptr{Void}, Ptr{Float64}, Ptr{Float64}),
                            S.m, S.n, 
-                           S.colptr, S.rowval, S.nzval, Symbolic, C_NULL, C_NULL)
-            if status != _jl_UMFPACK_OK; error("Error in symoblic factorization"); end
+                           S.colptr, S.rowval, S.nzval, Symbolic.val, C_NULL, C_NULL)
+            if status != _jl_UMFPACK_OK; error("Error in symbolic factorization"); end
+            finalizer(Symbolic,_jl_umfpack_free_symbolic)
             return Symbolic
         end
 
         function _jl_umfpack_symbolic{Tv<:Complex128,Ti<:$inttype}(S::SparseMatrixCSC{Tv,Ti})
             # Pointer to store the symbolic factorization returned by UMFPACK
-            Symbolic = Array(Ptr{Void}, 1)            
+            Symbolic = UmfpackPtr{Tv,Ti}(Array(Ptr{Void},1))
             status = ccall(dlsym(_jl_libumfpack, $f_sym_c),
                            Ti,
                            (Ti, Ti, 
                             Ptr{Ti}, Ptr{Ti}, Ptr{Float64}, Ptr{Float64}, Ptr{Void}, 
                             Ptr{Float64}, Ptr{Float64}),
                            S.m, S.n, 
-                           S.colptr, S.rowval, real(S.nzval), imag(S.nzval), Symbolic, 
+                           S.colptr, S.rowval, real(S.nzval), imag(S.nzval), Symbolic.val, 
                            C_NULL, C_NULL)
-            if status != _jl_UMFPACK_OK; error("Error in symoblic factorization"); end
+            if status != _jl_UMFPACK_OK; error("Error in symbolic factorization"); end
+            finalizer(Symbolic,_jl_umfpack_free_symbolic) # Check: do we need to free if there was an error?
             return Symbolic
         end
 
@@ -373,29 +438,31 @@ for (f_num_r, f_num_c, inttype) in
 
         function _jl_umfpack_numeric{Tv<:Float64,Ti<:$inttype}(S::SparseMatrixCSC{Tv,Ti}, Symbolic)
             # Pointer to store the numeric factorization returned by UMFPACK
-            Numeric = Array(Ptr{Void}, 1)
+            Numeric = UmfpackPtr{Tv,Ti}(Array(Ptr{Void},1))
             status = ccall(dlsym(_jl_libumfpack, $f_num_r),
                            Ti,
                            (Ptr{Ti}, Ptr{Ti}, Ptr{Float64}, Ptr{Void}, Ptr{Void}, 
                             Ptr{Float64}, Ptr{Float64}),
-                           S.colptr, S.rowval, S.nzval, Symbolic[1], Numeric, 
+                           S.colptr, S.rowval, S.nzval, Symbolic.val[1], Numeric.val, 
                            C_NULL, C_NULL)
             if status > 0; throw(MatrixIllConditionedException); end
             if status != _jl_UMFPACK_OK; error("Error in numeric factorization"); end
+            finalizer(Numeric,_jl_umfpack_free_numeric)
             return Numeric
         end
 
         function _jl_umfpack_numeric{Tv<:Complex128,Ti<:$inttype}(S::SparseMatrixCSC{Tv,Ti}, Symbolic)
             # Pointer to store the numeric factorization returned by UMFPACK
-            Numeric = Array(Ptr{Void}, 1)
+            Numeric = UmfpackPtr{Tv,Ti}(Array(Ptr{Void},1))
             status = ccall(dlsym(_jl_libumfpack, $f_num_c),
                            Ti,
                            (Ptr{Ti}, Ptr{Ti}, Ptr{Float64}, Ptr{Float64}, Ptr{Void}, Ptr{Void}, 
                             Ptr{Float64}, Ptr{Float64}),
-                           S.colptr, S.rowval, real(S.nzval), imag(S.nzval), Symbolic[1], Numeric, 
+                           S.colptr, S.rowval, real(S.nzval), imag(S.nzval), Symbolic.val[1], Numeric.val, 
                            C_NULL, C_NULL)
             if status > 0; throw(MatrixIllConditionedException); end
             if status != _jl_UMFPACK_OK; error("Error in numeric factorization"); end
+            finalizer(Numeric,_jl_umfpack_free_numeric)
             return Numeric
         end
 
@@ -408,20 +475,20 @@ for (f_sol_r, f_sol_c, inttype) in
     @eval begin
 
         function _jl_umfpack_solve{Tv<:Float64,Ti<:$inttype}(S::SparseMatrixCSC{Tv,Ti}, 
-                                                             b::Vector{Tv}, Numeric)
+                                                             b::Vector{Tv}, Numeric::UmfpackPtr{Tv,Ti})
             x = similar(b)
             status = ccall(dlsym(_jl_libumfpack, $f_sol_r),
                            Ti,
                            (Ti, Ptr{Ti}, Ptr{Ti}, Ptr{Float64}, 
                             Ptr{Float64}, Ptr{Float64}, Ptr{Void}, Ptr{Float64}, Ptr{Float64}),
                            _jl_UMFPACK_A, S.colptr, S.rowval, S.nzval, 
-                           x, b, Numeric[1], C_NULL, C_NULL)
+                           x, b, Numeric.val[1], C_NULL, C_NULL)
             if status != _jl_UMFPACK_OK; error("Error in solve"); end
             return x
         end
 
         function _jl_umfpack_solve{Tv<:Complex128,Ti<:$inttype}(S::SparseMatrixCSC{Tv,Ti}, 
-                                                                b::Vector{Tv}, Numeric)
+                                                                b::Vector{Tv}, Numeric::UmfpackPtr{Tv,Ti})
             xr = similar(b, Float64)
             xi = similar(b, Float64)
             status = ccall(dlsym(_jl_libumfpack, $f_sol_c),
@@ -429,13 +496,62 @@ for (f_sol_r, f_sol_c, inttype) in
                            (Ti, Ptr{Ti}, Ptr{Ti}, Ptr{Float64}, Ptr{Float64}, Ptr{Float64}, Ptr{Float64}, 
                             Ptr{Float64}, Ptr{Float64}, Ptr{Void}, Ptr{Float64}, Ptr{Float64}),
                            _jl_UMFPACK_A, S.colptr, S.rowval, real(S.nzval), imag(S.nzval), 
-                           xr, xi, real(b), imag(b), Numeric[1], C_NULL, C_NULL)
+                           xr, xi, real(b), imag(b), Numeric.val[1], C_NULL, C_NULL)
+            if status != _jl_UMFPACK_OK; error("Error in solve"); end
+            return complex(xr,xi)
+        end
+
+        function _jl_umfpack_transpose_solve{Tv<:Float64,Ti<:$inttype}(S::SparseMatrixCSC{Tv,Ti}, 
+                                                             b::Vector{Tv}, Numeric::UmfpackPtr{Tv,Ti})
+            x = similar(b)
+            status = ccall(dlsym(_jl_libumfpack, $f_sol_r),
+                           Ti,
+                           (Ti, Ptr{Ti}, Ptr{Ti}, Ptr{Float64}, 
+                            Ptr{Float64}, Ptr{Float64}, Ptr{Void}, Ptr{Float64}, Ptr{Float64}),
+                           _jl_UMFPACK_At, S.colptr, S.rowval, S.nzval, 
+                           x, b, Numeric.val[1], C_NULL, C_NULL)
+            if status != _jl_UMFPACK_OK; error("Error in solve"); end
+            return x
+        end
+
+        function _jl_umfpack_transpose_solve{Tv<:Complex128,Ti<:$inttype}(S::SparseMatrixCSC{Tv,Ti}, 
+                                                                b::Vector{Tv}, Numeric::UmfpackPtr{Tv,Ti})
+            xr = similar(b, Float64)
+            xi = similar(b, Float64)
+            status = ccall(dlsym(_jl_libumfpack, $f_sol_c),
+                           Ti,
+                           (Ti, Ptr{Ti}, Ptr{Ti}, Ptr{Float64}, Ptr{Float64}, Ptr{Float64}, Ptr{Float64}, 
+                            Ptr{Float64}, Ptr{Float64}, Ptr{Void}, Ptr{Float64}, Ptr{Float64}),
+                           _jl_UMFPACK_At, S.colptr, S.rowval, real(S.nzval), imag(S.nzval), 
+                           xr, xi, real(b), imag(b), Numeric.val[1], C_NULL, C_NULL)
             if status != _jl_UMFPACK_OK; error("Error in solve"); end
             return complex(xr,xi)
         end
 
     end
 end
+
+for (f_report, elty, inttype) in
+    (("umfpack_di_report_numeric", :Float64,    :Int32),
+     ("umfpack_zi_report_numeric", :Complex128, :Int32),
+     ("umfpack_dl_report_numeric", :Float64,    :Int64),
+     ("umfpack_zl_report_numeric", :Complex128, :Int64))
+     @eval begin
+
+         function _jl_umfpack_report{Tv<:$elty,Ti<:$inttype}(slu::SparseLU{Tv,Ti})
+
+             control = zeros(Float64, _jl_UMFPACK_CONTROL)
+             control[_jl_UMFPACK_PRL] = 4
+         
+             ccall(dlsym(_jl_libumfpack, $f_report),
+                   Ti,
+                   (Ptr{Void}, Ptr{Float64}),
+                   slu.numeric.val[1], control)
+         end
+
+    end
+end
+
 
 for (f_symfree, f_numfree, elty, inttype) in
     (("umfpack_di_free_symbolic","umfpack_di_free_numeric",:Float64,:Int32),
@@ -444,11 +560,11 @@ for (f_symfree, f_numfree, elty, inttype) in
      ("umfpack_zl_free_symbolic","umfpack_zl_free_numeric",:Complex128,:Int64))
     @eval begin
 
-        _jl_umfpack_free_symbolic{Tv<:$elty,Ti<:$inttype}(S::SparseMatrixCSC{Tv,Ti}, Symbolic) =
-        ccall(dlsym(_jl_libumfpack, $f_symfree), Void, (Ptr{Void},), Symbolic)
+        _jl_umfpack_free_symbolic{Tv<:$elty,Ti<:$inttype}(Symbolic::UmfpackPtr{Tv,Ti}) =
+        ccall(dlsym(_jl_libumfpack, $f_symfree), Void, (Ptr{Void},), Symbolic.val)
         
-        _jl_umfpack_free_numeric{Tv<:$elty,Ti<:$inttype}(S::SparseMatrixCSC{Tv,Ti}, Numeric) =
-        ccall(dlsym(_jl_libumfpack, $f_numfree), Void, (Ptr{Void},), Numeric)
+        _jl_umfpack_free_numeric{Tv<:$elty,Ti<:$inttype}(Numeric::UmfpackPtr{Tv,Ti}) =
+        ccall(dlsym(_jl_libumfpack, $f_numfree), Void, (Ptr{Void},), Numeric.val)
         
     end
 end

@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#ifdef __WIN32__
+#include <malloc.h>
+#endif
 #include "julia.h"
 #include "builtin_proto.h"
 #include "newobj_internal.h"
@@ -141,16 +144,19 @@ static void jl_serialize_tag_type(ios_t *s, jl_value_t *v)
 
 static void jl_serialize_module(ios_t *s, jl_module_t *m)
 {
+    // set on every startup; don't save
+    jl_sym_t *jhsym = jl_symbol("JULIA_HOME");
     writetag(s, jl_module_type);
     jl_serialize_value(s, m->name);
     size_t i;
     void **table = m->bindings.table;
     for(i=1; i < m->bindings.size; i+=2) {
-        if (table[i] != HT_NOTFOUND) {
+        if (table[i] != HT_NOTFOUND && table[i-1] != jhsym) {
             jl_binding_t *b = (jl_binding_t*)table[i];
             jl_serialize_value(s, b->name);
             jl_serialize_value(s, b->value);
             jl_serialize_value(s, b->type);
+            jl_serialize_value(s, b->owner);
             write_int8(s, b->constp);
             write_int8(s, b->exportp);
         }
@@ -164,6 +170,10 @@ static void jl_serialize_module(ios_t *s, jl_module_t *m)
         }
     }
     jl_serialize_value(s, NULL);
+    write_int32(s, m->imports.len);
+    for(i=0; i < m->imports.len; i++) {
+        jl_serialize_value(s, (jl_value_t*)m->imports.items[i]);
+    }
 }
 
 static int is_ast_node(jl_value_t *v)
@@ -611,10 +621,10 @@ static jl_value_t *jl_deserialize_value(ios_t *s)
         return (jl_value_t*)li;
     }
     else if (vtag == (jl_value_t*)jl_module_type) {
-        jl_module_t *m = jl_new_module(anonymous_sym);
+        jl_sym_t *mname = (jl_sym_t*)jl_deserialize_value(s);
+        jl_module_t *m = jl_new_module(mname);
         if (usetable)
             ptrhash_put(&backref_table, (void*)(ptrint_t)pos, m);
-        m->name = (jl_sym_t*)jl_deserialize_value(s);
         while (1) {
             jl_value_t *name = jl_deserialize_value(s);
             if (name == NULL)
@@ -622,6 +632,7 @@ static jl_value_t *jl_deserialize_value(ios_t *s)
             jl_binding_t *b = jl_get_binding_wr(m, (jl_sym_t*)name);
             b->value = jl_deserialize_value(s);
             b->type = (jl_type_t*)jl_deserialize_value(s);
+            b->owner = (jl_module_t*)jl_deserialize_value(s);
             b->constp = read_int8(s);
             b->exportp = read_int8(s);
         }
@@ -631,6 +642,10 @@ static jl_value_t *jl_deserialize_value(ios_t *s)
                 break;
             jl_set_expander(m, (jl_sym_t*)name,
                             (jl_function_t*)jl_deserialize_value(s));
+        }
+        size_t ni = read_int32(s);
+        for(size_t i=0; i < ni; i++) {
+            arraylist_push(&m->imports, jl_deserialize_value(s));
         }
         return (jl_value_t*)m;
     }
@@ -787,8 +802,8 @@ void jl_restore_system_image(char *fname)
     ios_t f;
     char *fpath = jl_find_file_in_path(fname);
     if (ios_file(&f, fpath, 1, 0, 0, 0) == NULL) {
-        ios_printf(ios_stderr, "system image file not found\n");
-        exit(1);
+        JL_PRINTF(JL_STDERR, "system image file not found\n");
+        jl_exit(1);
     }
 #ifdef JL_GC_MARKSWEEP
     int en = jl_gc_is_enabled();
@@ -867,7 +882,7 @@ jl_value_t *jl_compress_ast(jl_lambda_info_t *li, jl_value_t *ast)
     tree_literal_values = li->roots;
     jl_serialize_value(&dest, ast);
 
-    //ios_printf(ios_stderr, "%d bytes, %d values\n", dest.size, vals->length);
+    //JL_PRINTF(JL_STDERR, "%d bytes, %d values\n", dest.size, vals->length);
 
     jl_value_t *v = (jl_value_t*)jl_takebuf_array(&dest);
     if (jl_array_len(tree_literal_values) == 0) {
@@ -1052,10 +1067,8 @@ void jl_init_serializer(void)
                       jl_f_arrayset, jl_f_arraysize, 
                       jl_f_instantiate_type,
                       jl_f_convert_default, jl_f_convert_tuple,
-                      jl_trampoline, jl_f_new_struct_type, 
-                      jl_f_new_struct_fields, jl_f_new_type_constructor, 
-                      jl_f_new_tag_type, jl_f_new_tag_type_super, 
-                      jl_f_new_bits_type, jl_f_typevar, jl_f_union, 
+                      jl_trampoline, jl_f_new_type_constructor, 
+                      jl_f_typevar, jl_f_union, 
                       jl_f_methodexists, jl_f_applicable, 
                       jl_f_invoke, jl_apply_generic, 
                       jl_unprotect_stack, jl_f_task, 

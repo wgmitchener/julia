@@ -1014,11 +1014,11 @@ function start_remote_workers(machines, cmds)
 end
 
 function worker_ssh_cmd(host)
-    `ssh -n $host "bash -l -c \"cd $JULIA_HOME && ./julia --worker\""`
+    `ssh -n $host "bash -l -c \"cd $JULIA_HOME && ./julia-release-basic --worker\""`
 end #func
 
 function worker_ssh_cmd(host, key)
-    `ssh -i $key -n $host "bash -l -c \"cd $JULIA_HOME && ./julia --worker\""`
+    `ssh -i $key -n $host "bash -l -c \"cd $JULIA_HOME && ./julia-release-basic --worker\""`
 end #func
 
 function addprocs_ssh(machines) 
@@ -1036,7 +1036,7 @@ function addprocs_ssh(machines, keys)
     add_workers(PGRP, start_remote_workers(machines, map(x->worker_ssh_cmd(x[1],x[2]), cmdargs)))
 end #func
 
-worker_local_cmd() = `$JULIA_HOME/julia --worker`
+worker_local_cmd() = `$JULIA_HOME/julia-release-basic --worker`
 
 addprocs_local(np::Integer) =
     add_workers(PGRP, start_remote_workers({ "localhost" for i=1:np },
@@ -1331,7 +1331,9 @@ function find_vars(e, lst)
             push(lst, e)
         end
     elseif isa(e,Expr)
-        foreach(x->find_vars(x,lst), e.args)
+        for x in e.args
+            find_vars(x,lst)
+        end
     end
     lst
 end
@@ -1342,9 +1344,7 @@ function localize_vars(expr)
     # requires a special feature of the front end that knows how to insert
     # the correct variables. the list of free variables cannot be computed
     # from a macro.
-    Expr(:localize,
-         {:(()->($expr)), v...},
-         Any)
+    Expr(:localize, {:(()->($expr)), v...}, Any)
 end
 
 macro spawn(expr)

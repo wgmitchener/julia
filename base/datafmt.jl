@@ -1,8 +1,14 @@
 ## file formats ##
 
-function _jl_dlm_readrow(io, dlm, eol)
-    row = split(readuntil(io, eol), dlm, true)
-    row[end] = chomp(row[end])
+function _jl_dlm_readrow(io::IO, dlm, eol::Char)
+    row_string = readuntil(io, eol)
+    while length(row_string)==1 && row_string[1] == eol
+        row_string = readuntil(io, eol)
+    end
+    row = split(row_string, dlm, true)
+    if ends_with(row[end], eol)
+        row[end] = chop(row[end])
+    end
     row
 end
 
@@ -80,11 +86,10 @@ function _jl_dlmread_auto(a, io, dlm, nr, nc, row, eol)
 end
 
 countlines(io) = countlines(io, '\n')
-function countlines(io::String, eol::Char)
-    fh = open(io)
-    n = countlines(fh, eol)
-    close(fh)
-    return n
+function countlines(filename::String, eol::Char)
+    open(filename) do io
+        countlines(io, eol)
+    end
 end
 function countlines(io::IOStream, eol::Char)
     if !iswascii(eol)
@@ -92,20 +97,20 @@ function countlines(io::IOStream, eol::Char)
     end
     a = Array(Uint8, 8192)
     nl = 0
+    preceded_by_eol = true
     while !eof(io)
-        fill!(a, uint8(eol)+1)  # fill with byte we're not looking for
+        fill!(a, uint8(eol))
         try
             read(io, a)
         end
         for i=1:length(a)
             if a[i] == eol
+                preceded_by_eol = true
+            elseif preceded_by_eol
+                preceded_by_eol = false
                 nl+=1
             end
         end
-    end
-    skip(io,-1)
-    if read(io,Uint8) != eol
-        nl+=1
     end
     nl
 end
@@ -150,7 +155,7 @@ csvread(io)          = dlmread(io, ',')
 csvread(io, T::Type) = dlmread(io, ',', T)
 
 # todo: keyword argument for # of digits to print
-function dlmwrite(io, a, dlm::Char)
+function dlmwrite(io, a::Matrix, dlm::Char)
     nr, nc = size(a)
     for i = 1:nr
         for j = 1:nc
@@ -169,11 +174,12 @@ function dlmwrite(io, a, dlm::Char)
     nothing
 end
 
-function dlmwrite(fname::String, a, dlm::Char)
-    io = open(fname, "w")
-    dlmwrite(io, a, dlm)
-    close(io)
-    nothing
+dlmwrite(io, a::Vector, dlm::Char) = dlmwrite(io, reshape(a,length(a),1), dlm)
+
+function dlmwrite(fname::String, a::Matrix, dlm::Char)
+    open(fname, "w") do io
+        dlmwrite(io, a, dlm)
+    end
 end
 
 dlmwrite(io, a) = dlmwrite(io, a, ',')

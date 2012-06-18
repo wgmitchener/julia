@@ -6,7 +6,7 @@ print(io::IOStream, s::Symbol) = ccall(:jl_print_symbol, Void, (Ptr{Void}, Any,)
 show(io, x) = ccall(:jl_show_any, Void, (Any, Any,), io, x)
 
 showcompact(io, x) = show(io, x)
-showcompact(x)     = show(x)
+showcompact(x)     = showcompact(OUTPUT_STREAM::IOStream, x)
 
 show(io, s::Symbol) = print(io, s)
 show(io, tn::TypeName) = show(io, tn.name)
@@ -32,8 +32,8 @@ function show(io, l::LambdaStaticData)
     print(io, ")")
 end
 
-function show_delim_array(io, itr, open, delim, close, delim_one)
-    print(io, open)
+function show_delim_array(io, itr, op, delim, cl, delim_one)
+    print(io, op)
     state = start(itr)
     newline = true
     first = true
@@ -60,7 +60,7 @@ function show_delim_array(io, itr, open, delim, close, delim_one)
             end
 	end
     end
-    print(io, close)
+    print(io, cl)
 end
 
 show_comma_array(io, itr, o, c) = show_delim_array(io, itr, o, ',', c, false)
@@ -231,22 +231,87 @@ function show(io, mt::MethodTable)
     end
 end
 
-function dump(io, x)
+# dump & idump - structured tree representation like R's str()
+# - dump is for the user-facing structure
+# - idump is for the internal structure
+#
+# x is the object
+# n is the depth of traversal in nested types (5 is the default)
+# indent is a character string of spaces that is incremented at
+# each descent.
+#
+# Package writers may overload dump for other nested types like lists
+# or DataFrames. If overloaded, check the nesting level (n), and if
+# n > 0, dump each component. Limit to the first 10 entries. When
+# dumping components, decrement n, and add two spaces to indent.
+#
+# Package writers should not overload idump.
+
+function idump(fn::Function, io::IOStream, x, n::Int, indent)
     T = typeof(x)
-    if isa(x,Array)
-        print(io, "Array($(eltype(x)),$(size(x)))")
-    elseif isa(T,CompositeKind)
-        print(io, T,'(')
-        for field = T.names
-            print(io, field, '=')
-            dump(getfield(x, field))
-            print(io, ',')
+    print(io, T, " ")
+    if isa(T, CompositeKind)
+        println(io)
+        if n > 0
+            for field in T.names
+                if field != symbol("")    # prevents segfault if symbol is blank
+                    print(io, indent, "  ", field, ": ")
+                    try
+                        fn(io, getfield(x, field), n - 1, strcat(indent, "  "))
+                    catch
+                        println(io)
+                    end
+                end
+            end
         end
-        println(io, ')')
     else
-        show(io, x)
+        println(io, x)
     end
 end
+function idump(fn::Function, io::IOStream, x::Array{Any}, n::Int, indent)
+    println("Array($(eltype(x)),$(size(x)))")
+    if n > 0
+        for i in 1:min(10, length(x))
+            print(io, indent, "  ", i, ": ")
+            fn(io, x[i], n - 1, strcat(indent, "  "))
+        end
+    end
+end
+idump(fn::Function, io::IOStream, x::AbstractKind, n::Int, indent) = println(io, typeof(x), " ", x)
+idump(fn::Function, io::IOStream, x::Symbol, n::Int, indent) = println(io, typeof(x), " ", x)
+idump(fn::Function, io::IOStream, x::Function, n::Int, indent) = println(io, x)
+idump(fn::Function, io::IOStream, x::Array, n::Int, indent) = println(io, "Array($(eltype(x)),$(size(x)))", " ", x[1:min(4,length(x))])
+# defaults:
+idump(fn::Function, io::IOStream, x) = idump(idump, io, x, 5, "")  # default is 5 levels
+idump(fn::Function, io::IOStream, x, n::Int) = idump(idump, io, x, n, "")
+idump(fn::Function, args...) = idump(fn, OUTPUT_STREAM::IOStream, args...)
+idump(io::IOStream, args...) = idump(idump, io, args...)
+idump(args...) = idump(idump, OUTPUT_STREAM::IOStream, args...)
+
+# Here are methods specifically for dump:
+dump(io::IOStream, x, n::Int) = dump(io, x, n, "")
+dump(io::IOStream, x) = dump(io, x, 5, "")  # default is 5 levels
+dump(args...) = dump(OUTPUT_STREAM::IOStream, args...)
+dump(io::IOStream, x::String, n::Int, indent) = println(io, typeof(x), " \"", x, "\"")
+dump(io::IOStream, x::Type, n::Int, indent) = println(io, typeof(x), " ", x)
+dump(io::IOStream, x, n::Int, indent) = idump(dump, io, x, n, indent)
+
+function dump(io::IOStream, x::Dict, n::Int, indent)
+    println(typeof(x), " len ", length(x))
+    if n > 0
+        i = 1
+        for (k,v) in x
+            print(io, indent, "  ", k, ": ")
+            dump(io, v, n - 1, strcat(indent, "  "))
+            if i > 10
+                break
+            end
+            i += 1
+        end
+    end
+end
+
+showall(x) = showall(OUTPUT_STREAM::IOStream, x)
 
 function showall{T}(io, a::AbstractArray{T,1})
     if is(T,Any)
@@ -463,8 +528,8 @@ function show_nd(io, a::AbstractArray)
         print(io, "[:, :, ")
         for i = 1:(nd-1); print(io, "$(idxs[i]), "); end
         println(io, idxs[end], "] =")
-        slice = a[:,:,idxs...]
-        print_matrix(io, reshape(slice, size(slice,1), size(slice,2)))
+        slice = sub(a, 1:size(a,1), 1:size(a,2), idxs...)
+        print_matrix(io, slice)
         print(io, idxs == tail ? "" : "\n\n")
     end
     cartesian_map((idxs...)->print_slice(io,idxs...), tail)
@@ -479,7 +544,15 @@ function whos()
     end
 end
 
-show{T}(io, x::AbstractArray{T,0}) = (println(io, summary(x),":"); show(io, x[]))
+function show{T}(io, x::AbstractArray{T,0})
+    println(io, summary(x),":")
+    sx = _jl_undef_ref_str
+    try
+        sx = sprint(showcompact, x[])
+    end
+    print(io, sx)
+end
+
 function show(io, X::AbstractArray)
     print(io, summary(X))
     if !isempty(X)
