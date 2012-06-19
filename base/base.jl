@@ -101,6 +101,7 @@ uid(x::ANY) = ccall(:jl_uid, Uint, (Any,), x)
 dlsym(hnd, s::String) = ccall(:jl_dlsym, Ptr{Void}, (Ptr{Void}, Ptr{Uint8}), hnd, s)
 dlsym(hnd, s::Symbol) = ccall(:jl_dlsym, Ptr{Void}, (Ptr{Void}, Ptr{Uint8}), hnd, s)
 dlopen(s::String, v::String) = ccall(:jl_load_dynamic_library, Ptr{Void}, (Ptr{Uint8},Ptr{Uint8}), s, v)
+dlopen(s::String, v::Int) = dlopen(s, string(v))
 dlopen(s::String) = ccall(:jl_load_dynamic_library, Ptr{Void}, (Ptr{Uint8},Ptr{None}), s, C_NULL)
 
 identity(x) = x
