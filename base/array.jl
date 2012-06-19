@@ -327,7 +327,7 @@ end
 #        end
 #    end
 #end
-function ref{T}(A::Array{T}, Colon)
+function ref{T}(A::Array{T}, ::Type{Colon})
     X = Array(T, numel(A))
     copy_to_nocheck(X, 1, A, 1, numel(A))
 end
@@ -341,6 +341,39 @@ ref(A::Array, I::Range{Int}) = [ A[i] for i=I ]
 ref(A::Array, I::AbstractVector{Int}) = [ A[i] for i=I ]
 
 # Matrix indexing
+function ref{T}(A::Array{T}, ::Type{Colon}, ::Type{Colon})
+    if size(A,1) > 0
+        X = Array(T, size(A,1), div(numel(A,1), size(A,1)))
+        copy_to_nocheck(X, 1, A, 1, numel(A))
+    else
+        sz = size(A)
+        p = sz[2]
+        for i = 3:length(sz)
+            p *= sz[i]
+        end
+        X = Array(T, 0, p)  # no copy needed because the array is empty
+    end
+end
+function ref{T}(A::Array{T}, ::Type{Colon}, j::Int)
+    X = Array(T, size(A,1))
+    copy_to(X, 1, A, (j-1)*size(A,1) + 1, size(A,1))
+end
+function ref{T}(A::Array{T}, ::Type{Colon}, J::Range1{Int})
+    if length(J) > 1
+        X = Array(T, size(A,1), length(J))
+    else
+        X = Array(T, size(A,1))
+    end
+    copy_to(X, 1, A, (first(J)-1)*size(A,1) + 1, size(A,1)*length(J))
+end
+function ref{T}(A::Array{T}, ::Type{Colon}, J::AbstractVector{Int})
+    X = Array(T, size(A,1), length(J))
+    dsto = 1
+    for j in J
+        copy_to(X, dsto, A, (j-1)*size(A,1) + 1, size(A,1))
+        dsto += size(A,1)
+    end
+end
 function ref{T}(A::Array{T}, I::Range1{Int}, j::Int)
     if first(I) < 1 || last(I) > size(A,1) || j < 1 || j > size(A,2)
         throw(BoundsError())
@@ -352,7 +385,7 @@ function ref{T}(A::Array{T}, I::Range1{Int}, J::Union(Range1{Int},Range{Int}))
     if first(I) < 1 || last(I) > size(A,1) || first(J) < 1 || last(J) > size(A,2)
         throw(BoundsError())
     end
-    X = Array(T,length(I),length(J))
+    X = Array(T, length(I), length(J))
     if length(I) == size(A,1) && step(J) == 1
         copy_to_nocheck(X, 1, A, (first(J)-1)*size(A,1) + 1, size(A,1)*length(J))    else
         for j = J
@@ -366,6 +399,8 @@ ref(A::Array, i::Int, J::AbstractVector{Int}) = [ A[i,j] for j=J ]
 ref(A::Array, I::AbstractVector{Int}, J::AbstractVector{Int}) = [ A[i,j] for i=I, j=J ]
 
 # Ref for higher dimensions
+#function ref_memcpy(X::Array, A::Array, ncopy::Int, I::Indices...)
+    
 
 let ref_iter = ForwardSubarrayIterator()
 function ref{T}(A::Array{T}, I::RangeIndex...)
