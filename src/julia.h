@@ -763,7 +763,8 @@ jl_function_t *jl_get_expander(jl_module_t *m, jl_sym_t *macroname);
 void jl_set_expander(jl_module_t *m, jl_sym_t *macroname, jl_function_t *f);
 
 // external libraries
-DLLEXPORT uv_lib_t *jl_load_dynamic_library(char *fname);
+DLLEXPORT uv_lib_t *jl_load_dynamic_library(const char *libname, const char *libversion);
+DLLEXPORT uv_lib_t *jl_dlopen_null();
 DLLEXPORT void *jl_dlsym(uv_lib_t *handle, char *symbol);
 
 // compiler

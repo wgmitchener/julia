@@ -121,7 +121,7 @@ void julia_init(char *imageFile)
 {
     jl_page_size = sysconf(_SC_PAGESIZE);
     jl_find_stack_bottom();
-    jl_dl_handle = jl_load_dynamic_library(NULL);
+    jl_dl_handle = jl_dlopen_null();
 #ifdef JL_GC_MARKSWEEP
     jl_gc_init();
     jl_gc_disable();

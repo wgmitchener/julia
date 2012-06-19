@@ -6,7 +6,7 @@ const stderr_stream = make_stderr_stream()
 OUTPUT_STREAM = stdout_stream
 
 # restore shared library handles
-_jl_lib = ccall(:jl_load_dynamic_library,Ptr{Void},(Ptr{None},),C_NULL)
+_jl_lib = ccall(:jl_dlopen_null, Ptr{Void}, ())
 @unix_only _jl_repl = _jl_lib
 @windows_only _jl_repl = ccall(:GetModuleHandleA,stdcall,Ptr{Void},(Ptr{Void},),C_NULL)
 

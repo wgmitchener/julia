@@ -144,6 +144,7 @@
     jl_load_file_string;
     jl_dlsym;
     jl_load_dynamic_library;
+    jl_dlopen_null;
     jl_stdin_callback;
     repl_callback_enable;
     jl_toplevel_eval;

@@ -13,16 +13,6 @@
 #  include <dlfcn.h>
 #endif
 
-#if defined(__APPLE__)
-static char *extensions[] = { "", ".dylib", ".bundle" };
-#define N_EXTENSIONS 3
-#elif defined(_WIN32)
-static char *extensions[] = { ".dll" };
-#define N_EXTENSIONS 1
-#else
-static char *extensions[] = { ".so", "" };
-#define N_EXTENSIONS 2
-#endif
 
 #include "julia.h"
 #include "uv.h"
@@ -31,76 +21,55 @@ static char *extensions[] = { ".so", "" };
 
 extern char *julia_home;
 
-uv_lib_t *jl_load_dynamic_library(char *modname)
+uv_lib_t *jl_dlopen_null()
 {
-    int error;
-    char *ext;
+    uv_lib_t *lib = malloc(sizeof(uv_lib_t));
+    lib->errmsg = NULL;
+#ifdef _WIN32
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+        | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCSTR)(&jl_load_dynamic_library),
+        &lib->handle);
+#else
+    lib->handle = dlopen(NULL, RTLD_NOW);
+#endif
+    return lib;
+}
+
+uv_lib_t *jl_load_dynamic_library(const char *libname, const char *libversion)
+{
+    uv_lib_t *lib = malloc(sizeof(uv_lib_t));
     char path[PATHBUF];
-    int i;
-    uv_lib_t *handle=malloc(sizeof(uv_lib_t));
-    handle->errmsg=NULL;
-
-    if (modname == NULL) {
-#ifdef _WIN32
-        if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            (LPCSTR)(&jl_load_dynamic_library),
-            &handle->handle))
-            jl_errorf("could not load base module", modname);
+    const char *ext =
+#if defined(__APPLE__)
+        ".dylib";
+#elif defined(_WIN32)
+        ".dll";
 #else
-        handle->handle = dlopen(NULL,RTLD_NOW);
+        ".so";
 #endif
-        goto done;
-    }
-#ifdef _WIN32
-    else if (modname[1] == ':') {
+
+    if (libversion) {
+#ifdef __APPLE__
+        snprintf(path, PATHBUF, "%s.%s%s", libname, libversion, ext);
 #else
-    else if (modname[0] == '/') {
+        snprintf(path, PATHBUF, "%s%s.%s", libname, ext, libversion);
 #endif
-        error = uv_dlopen(modname,handle);
-        if (!error) goto done;
-    }
-    char *cwd;
-
-    for(i=0; i < N_EXTENSIONS; i++) {
-        ext = extensions[i];
-        path[0] = '\0';
-        handle->handle = NULL;
-        if (modname[0] != '/') {
-            if (julia_home) {
-                /* try julia_home/../lib */
-                snprintf(path, PATHBUF, "%s/../lib/%s%s", julia_home, modname, ext);
-                error = uv_dlopen(path, handle);
-                if (!error) goto done;
-                // if file exists but didn't load, show error details
-                struct stat sbuf;
-                if (stat(path, &sbuf) != -1) {
-                    //JL_PRINTF(JL_STDERR, "could not load module %s (%d): %s\n", modname, error, uv_dlerror(handle));
-                    jl_errorf("could not load module %s: %s", modname, uv_dlerror(handle));
-                }
-            }
-            cwd = getcwd(path, PATHBUF);
-            if (cwd != NULL) {
-                /* next try load from current directory */
-                strncat(path, "/", PATHBUF-1-strlen(path));
-                strncat(path, modname, PATHBUF-1-strlen(path));
-                strncat(path, ext, PATHBUF-1-strlen(path));
-                error = uv_dlopen(path, handle);
-                if (!error) goto done;
-            }
-        }
-        /* try loading from standard library path */
-        snprintf(path, PATHBUF, "%s%s", modname, ext);
-        error = uv_dlopen(path, handle);
-        if (!error) goto done;
+    } else {
+        snprintf(path, PATHBUF, "%s%s", libname, ext);
     }
 
-    //JL_PRINTF(JL_STDERR, "could not load module %s (%d): %s\n", modname, error, uv_dlerror(handle));
-    jl_errorf("could not load module %s: %s", modname, uv_dlerror(handle));
-    uv_dlclose(handle);
-    free(handle);
+    if (!uv_dlopen(path, lib))
+        return lib;
+
+    if (!uv_dlopen(libname, lib))
+        return lib;
+
+    JL_PRINTF(JL_STDERR, "could not load module %s: %s\n", libname, uv_dlerror(lib));
+    jl_errorf("could not load module %s.%s: %s", libname, libversion, uv_dlerror(lib));
+    uv_dlclose(lib);
+    free(lib);
     return NULL;
-done:
-    return handle;
 }
 
 void *jl_dlsym_e(uv_lib_t *handle, char *symbol) {
