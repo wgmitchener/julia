@@ -165,35 +165,25 @@ endif
 
 # OS specific stuff
 
-RPATH = 
-RPATH_ORIGIN = 
-
-ifeq ($(OS), WINNT)
-SHELL_EXT = bat
-else
-SHELL_EXT = sh
-endif
-
-ifeq ($(OS), Linux)
 INSTALL_NAME_CMD = true -ignore
 INSTALL_NAME_CHANGE_CMD = true -ignore
+RPATH = 
+RPATH_ORIGIN = 
+SHELL_EXT = sh
 SHLIB_EXT = so
+WHOLE_ARCHIVE = -Wl,--whole-archive
+NO_WHOLE_ARCHIVE = -Wl,--no-whole-archive
+
+ifeq ($(OS), Linux)
 RPATH = -Wl,-rpath,'$$ORIGIN/../lib'
 RPATH_ORIGIN = -Wl,-rpath,'$$ORIGIN'
 OSLIBS += -ldl -lrt -Wl,--export-dynamic -Wl,--version-script=$(JULIAHOME)/src/julia.expmap -Wl,--no-whole-archive $(LIBUNWIND)
-WHOLE_ARCHIVE = -Wl,--whole-archive
-NO_WHOLE_ARCHIVE = -Wl,--no-whole-archive
 JLDFLAGS = -Wl,-Bdynamic
 endif
 
 ifeq ($(OS), FreeBSD)
-INSTALL_NAME_CMD = true -ignore
-INSTALL_NAME_CHANGE_CMD = true -ignore
-SHLIB_EXT = so
 RPATH = -Wl,-rpath,'$$ORIGIN/../lib' -Wl,-z,origin
 RPATH_ORIGIN = -Wl,-rpath,'$$ORIGIN' -Wl,-z,origin
-WHOLE_ARCHIVE = -Wl,--whole-archive
-NO_WHOLE_ARCHIVE = -Wl,--no-whole-archive
 JLD_FLAGS = -Wl,-Bdynamic
 OSLIBS += -lkvm -lrt -Wl,--export-dynamic -Wl,--version-script=$(JULIAHOME)/src/julia.expmap $(NO_WHOLE_ARCHIVE) $(LIBUNWIND)
 endif
@@ -209,11 +199,8 @@ JLDFLAGS =
 endif
 
 ifeq ($(OS), WINNT)
-INSTALL_NAME_CMD = true -ignore
-INSTALL_NAME_CHANGE_CMD = true -ignore
+SHELL_EXT = bat
 SHLIB_EXT = dll
-WHOLE_ARCHIVE = -Wl,--whole-archive
-NO_WHOLE_ARCHIVE = -Wl,--no-whole-archive
 OSLIBS += -Wl,--export-all-symbols -Wl,--version-script=$(JULIAHOME)/src/julia.expmap -lpthread $(NO_WHOLE_ARCHIVE) -lPsapi -lkernel32 -lWs2_32 -lIphlpapi
 endif
 
