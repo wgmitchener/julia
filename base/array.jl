@@ -18,7 +18,7 @@ length(a::Array) = arraylen(a)
 
 ## copy ##
 
-function copy_to_nocheck{T}(dest::Array{T}, dsto, src::Array{T}, so, N)
+function copy_to_unsafe{T}(dest::Array{T}, dsto, src::Array{T}, so, N)
     if isa(T, BitsKind)
         ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
               pointer(dest, dsto), pointer(src, so), N*sizeof(T))
@@ -267,6 +267,8 @@ end
 
 ## Indexing: ref ##
 
+# Indexing with integers
+# Note: do not casually change Ints to Integers. See issue #795.
 ref(a::Array, i::Int) = arrayref(a,i)
 ref(a::Array, i::Integer) = arrayref(a,int(i))
 ref{T}(a::Array{T,0}) = arrayref(a,1)
@@ -274,43 +276,41 @@ ref{T}(a::Array{T,1}, i::Int) = arrayref(a,i)
 ref{T}(a::Array{T,1}, i::Integer) = arrayref(a,int(i))
 ref(a::Array{Any,1}, i::Int) = arrayref(a,i)
 ref(a::Array{Any,1}, i::Integer) = arrayref(a,int(i))
-
-# Note: do not casually change Ints to Integers. See issue #795.
 function ref{T}(A::Union(Matrix{T},Array{T}), i0::Int, i1::Int)
-#    if (1 <= i0 <= size(A,1))
+    if (1 <= i0 <= size(A,1))
         A[i0 + size(A,1)*(i1-1)]
-#    else
-#        throw(BoundsError())
-#    end
+    else
+        throw(BoundsError())
+    end
 end
 function ref{T}(A::Union(Array{T,3},Array{T}), i0::Int, i1::Int, i2::Int)
-#    if (1 <= i0 <= size(A,1)) && (1 <= i1 <= size(A,2))
+    if (1 <= i0 <= size(A,1)) && (1 <= i1 <= size(A,2))
         A[i0 + size(A,1)*((i1-1) + size(A,2)*(i2-1))]
-#    else
-#        throw(BoundsError())
-#    end
+    else
+        throw(BoundsError())
+    end
 end
 function ref{T}(A::Union(Array{T,4},Array{T}), i0::Int, i1::Int, i2::Int, i3::Int)
-#    if (1 <= i0 <= size(A,1)) && (1 <= i1 <= size(A,2)) && (1 <= i2 <= size(A,3))
+    if (1 <= i0 <= size(A,1)) && (1 <= i1 <= size(A,2)) && (1 <= i2 <= size(A,3))
         A[i0 + size(A,1)*((i1-1) + size(A,2)*((i2-1) + size(A,3)*(i3-1)))]
-#    else
-#        throw(BoundsError())
-#    end
+    else
+        throw(BoundsError())
+    end
 end
 function ref{T}(A::Array{T}, I::Int...)
     ndims = length(I)
- #   if 1 <= I[1] <= size(A,1)
+    if 1 <= I[1] <= size(A,1)
         index = I[1]
-#    else
-#        throw(BoundsError())
-#    end
+    else
+        throw(BoundsError())
+    end
     stride = 1
     for k=2:ndims
-#        if 1 <= I[k] <= size(A,k)
+        if 1 <= I[k] <= size(A,k)
             index = I[1]
-#        else
-#            throw(BoundsError())
-#        end
+        else
+            throw(BoundsError())
+        end
         stride = stride * size(A, k-1)
         index += (I[k]-1) * stride
     end
@@ -329,22 +329,22 @@ end
 #end
 function ref{T}(A::Array{T}, ::Type{Colon})
     X = Array(T, numel(A))
-    copy_to_nocheck(X, 1, A, 1, numel(A))
+    copy_to_unsafe(X, 1, A, 1, numel(A))
 end
 function ref{T}(A::Array{T}, I::Range1{Int})
     X = Array(T, length(I))
     copy_to(X, 1, A, first(I), length(I))
 end
 
-# Linear indexing
+# Generic linear indexing
 ref(A::Array, I::Range{Int}) = [ A[i] for i=I ]
 ref(A::Array, I::AbstractVector{Int}) = [ A[i] for i=I ]
 
-# Matrix indexing
+# 2d indexing
 function ref{T}(A::Array{T}, ::Type{Colon}, ::Type{Colon})
     if size(A,1) > 0
         X = Array(T, size(A,1), div(numel(A,1), size(A,1)))
-        copy_to_nocheck(X, 1, A, 1, numel(A))
+        copy_to_unsafe(X, 1, A, 1, numel(A))
     else
         sz = size(A)
         p = sz[2]
@@ -367,7 +367,11 @@ function ref{T}(A::Array{T}, ::Type{Colon}, J::Range1{Int})
     copy_to(X, 1, A, (first(J)-1)*size(A,1) + 1, size(A,1)*length(J))
 end
 function ref{T}(A::Array{T}, ::Type{Colon}, J::AbstractVector{Int})
-    X = Array(T, size(A,1), length(J))
+    if length(J) > 1
+        X = Array(T, size(A,1), length(J))
+    else
+        X = Array(T, size(A,1))
+    end
     dsto = 1
     for j in J
         copy_to(X, dsto, A, (j-1)*size(A,1) + 1, size(A,1))
@@ -379,7 +383,7 @@ function ref{T}(A::Array{T}, I::Range1{Int}, j::Int)
         throw(BoundsError())
     end
     X = Array(T,length(I))
-    copy_to_nocheck(X, 1, A, (j-1)*size(A,1) + 1, length(I))
+    copy_to_unsafe(X, 1, A, (j-1)*size(A,1) + 1, length(I))
 end
 function ref{T}(A::Array{T}, I::Range1{Int}, J::Union(Range1{Int},Range{Int}))
     if first(I) < 1 || last(I) > size(A,1) || first(J) < 1 || last(J) > size(A,2)
@@ -387,9 +391,9 @@ function ref{T}(A::Array{T}, I::Range1{Int}, J::Union(Range1{Int},Range{Int}))
     end
     X = Array(T, length(I), length(J))
     if length(I) == size(A,1) && step(J) == 1
-        copy_to_nocheck(X, 1, A, (first(J)-1)*size(A,1) + 1, size(A,1)*length(J))    else
+        copy_to_unsafe(X, 1, A, (first(J)-1)*size(A,1) + 1, size(A,1)*length(J))    else
         for j = J
-            copy_to_nocheck(X, 1, A, (j-1)*size(A,1) + 1, length(I))
+            copy_to_unsafe(X, 1, A, (j-1)*size(A,1) + 1, length(I))
         end
     end
 end
@@ -399,8 +403,8 @@ ref(A::Array, i::Int, J::AbstractVector{Int}) = [ A[i,j] for j=J ]
 ref(A::Array, I::AbstractVector{Int}, J::AbstractVector{Int}) = [ A[i,j] for i=I, j=J ]
 
 # Ref for higher dimensions
-#function ref_memcpy(X::Array, A::Array, ncopy::Int, I::Indices...)
-    
+#function ref_memcpy_unsafe(X::Array, A::Array, rcopy::Range1{Int}, I::Indices...)
+#end
 
 let ref_iter = ForwardSubarrayIterator()
 function ref{T}(A::Array{T}, I::RangeIndex...)
