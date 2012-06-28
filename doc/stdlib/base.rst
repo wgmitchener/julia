@@ -6,9 +6,10 @@ Getting Around
 
    Quit (or control-D at the prompt). The default exit code is zero, indicating that the processes completed successfully.
 
-.. function:: whos()
+.. function:: whos([pattern::Regex])
 
-   Print information about global user-defined variables.
+   Print information about global user-defined variables, optionally restricted
+   to those matching ``pattern``.
 
 .. function:: edit("file"[, line])
 
@@ -783,7 +784,7 @@ Data Formats
 
    Convert an integer to an octal string, optionally specifying a number of digits to pad to.
 
-.. function:: int2str(n, base[, pad])
+.. function:: base(b, n[, pad])
 
    Convert an integer to a string in the given base, optionally specifying a number of digits to pad to.
 
