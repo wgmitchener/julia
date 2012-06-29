@@ -13,7 +13,6 @@
 #  include <dlfcn.h>
 #endif
 
-
 #include "julia.h"
 #include "uv.h"
 
@@ -34,6 +33,27 @@ uv_lib_t *jl_dlopen_null()
     lib->handle = dlopen(NULL, RTLD_NOW);
 #endif
     return lib;
+}
+
+int jl_uv_dlopen(const char* filename, uv_lib_t* lib)
+{
+#ifdef _WIN32
+    return uv_dlopen(filename, lib);
+#else
+    dlerror(); /* Reset error status. */
+    int flags = RTLD_LAZY;
+#ifdef RTLD_DEEPBIND
+    flags |= RTLD_DEEPBIND;
+#endif
+    lib->handle = dlopen(filename, flags);
+    if (lib->handle) {
+        lib->errmsg = NULL;
+        return 0;
+    } else {
+        lib->errmsg = strdup(dlerror());
+        return -1;
+    }
+#endif
 }
 
 uv_lib_t *jl_load_dynamic_library(const char *libname, const char *libversion)
@@ -59,10 +79,10 @@ uv_lib_t *jl_load_dynamic_library(const char *libname, const char *libversion)
         snprintf(path, PATHBUF, "%s%s", libname, ext);
     }
 
-    if (!uv_dlopen(path, lib))
+    if (!jl_uv_dlopen(path, lib))
         return lib;
 
-    if (!uv_dlopen(libname, lib))
+    if (!jl_uv_dlopen(libname, lib))
         return lib;
 
     JL_PRINTF(JL_STDERR, "could not load module %s: %s\n", libname, uv_dlerror(lib));
