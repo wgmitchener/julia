@@ -148,47 +148,6 @@ function sparse(A::Matrix)
     return _jl_sparse_sorted!(I,J,V,m,n,+)
 end
 
-# _jl_sparse_sort uses sort to rearrange the input and construct the sparse matrix
-
-_jl_sparse_sort(I,J,V) = _jl_sparse_sort(I, J, V, int(max(I)), int(max(J)), +)
-
-_jl_sparse_sort(I,J,V,m,n) = _jl_sparse_sort(I, J, V, m, n, +)
-
-function _jl_sparse_sort{Ti<:Union(Int32,Int64)}(I::AbstractVector{Ti}, J::AbstractVector{Ti},
-                                                 V::Union(Number, AbstractVector),
-                                                 m::Int, n::Int, combine::Function)
-
-    if length(I) == 0; return spzeros(eltype(V),m,n); end
-
-    issortedI = issorted(I)
-    issortedJ = issorted(J)
-
-    if !issortedI
-        (I,p) = sortperm(I)
-        J = J[p]
-        if isa(V, AbstractVector); V = V[p]; end
-    else
-        if issortedJ; I = copy(I); end
-    end
-
-    if !issortedJ
-        (J,p) = sortperm(J)
-        I = I[p]
-        V = V[p]
-        if isa(V, AbstractVector); V = V[p]; end
-    else
-        if issortedI; J = copy(J); end
-    end
-
-    if issortedI && issortedJ
-        if isa(V, AbstractVector); V = copy(V); end
-    end
-
-    if isa(V, Number); V = fill(V, length(I)); end
-
-    return _jl_sparse_sorted!(I,J,V,m,n,combine)
-end
-
 _jl_sparse_sorted!(I,J,V,m,n) = _jl_sparse_sorted!(I,J,V,m,n,+)
 
 function _jl_sparse_sorted!{Ti<:Union(Int32,Int64)}(I::AbstractVector{Ti}, J::AbstractVector{Ti},
@@ -1013,36 +972,6 @@ function _jl_spa_store_reset{T}(S::SparseAccumulator{T}, col, colptr, rowval, nz
     colptr[col+1] = start + nvals
     S.nvals = 0
     return (rowval, nzval)
-end
-
-# S = S + a*x, where x is col j of A
-function _jl_spa_axpy{T}(S::SparseAccumulator{T}, a, A::SparseMatrixCSC, j::Integer)
-    colptrA = A.colptr
-    rowvalA = A.rowval
-    nzvalA = A.nzval
-
-    vals = S.vals
-    flags = S.flags
-    indexes = S.indexes
-    nvals = S.nvals
-    z = zero(T)
-
-    for i = colptrA[j]:(colptrA[j+1]-1)
-        v = a * nzvalA[i]
-        r = rowvalA[i]
-
-        if flags[r] == true
-            vals[r] += v
-        else
-            if v == z; continue; end
-            flags[r] = true
-            vals[r] = v
-            nvals += 1
-            indexes[nvals] = r
-        end
-    end
-
-    S.nvals = nvals
 end
 
 # Set spa S to be the i'th column of A
