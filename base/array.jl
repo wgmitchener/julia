@@ -268,7 +268,6 @@ end
 ## Indexing: ref ##
 
 # Indexing with integers
-# Note: do not casually change Ints to Integers. See issue #795.
 ref(a::Array, i::Int) = arrayref(a,i)
 ref(a::Array, i::Integer) = arrayref(a,int(i))
 ref{T}(a::Array{T,0}) = arrayref(a,1)
@@ -276,41 +275,19 @@ ref{T}(a::Array{T,1}, i::Int) = arrayref(a,i)
 ref{T}(a::Array{T,1}, i::Integer) = arrayref(a,int(i))
 ref(a::Array{Any,1}, i::Int) = arrayref(a,i)
 ref(a::Array{Any,1}, i::Integer) = arrayref(a,int(i))
-function ref{T}(A::Union(Matrix{T},Array{T}), i0::Int, i1::Int)
-    if (1 <= i0 <= size(A,1))
-        A[i0 + size(A,1)*(i1-1)]
-    else
-        throw(BoundsError())
-    end
-end
-function ref{T}(A::Union(Array{T,3},Array{T}), i0::Int, i1::Int, i2::Int)
-    if (1 <= i0 <= size(A,1)) && (1 <= i1 <= size(A,2))
-        A[i0 + size(A,1)*((i1-1) + size(A,2)*(i2-1))]
-    else
-        throw(BoundsError())
-    end
-end
-function ref{T}(A::Union(Array{T,4},Array{T}), i0::Int, i1::Int, i2::Int, i3::Int)
-    if (1 <= i0 <= size(A,1)) && (1 <= i1 <= size(A,2)) && (1 <= i2 <= size(A,3))
-        A[i0 + size(A,1)*((i1-1) + size(A,2)*((i2-1) + size(A,3)*(i3-1)))]
-    else
-        throw(BoundsError())
-    end
-end
-function ref{T}(A::Array{T}, I::Int...)
+
+# In what follows, do not casually change Ints to Integers. See issue #795.
+ref(A::Array, i0::Int, i1::Int) = A[i0 + size(A,1)*(i1-1)]
+ref(A::Array, i0::Int, i1::Int, i2::Int) =
+    A[i0 + size(A,1)*((i1-1) + size(A,2)*(i2-1))]
+ref(A::Array, i0::Int, i1::Int, i2::Int, i3::Int) =
+    A[i0 + size(A,1)*((i1-1) + size(A,2)*((i2-1) + size(A,3)*(i3-1)))]
+
+function ref(A::Array, I::Int...)
     ndims = length(I)
-    if 1 <= I[1] <= size(A,1)
-        index = I[1]
-    else
-        throw(BoundsError())
-    end
+    index = I[1]
     stride = 1
     for k=2:ndims
-        if 1 <= I[k] <= size(A,k)
-            index = I[1]
-        else
-            throw(BoundsError())
-        end
         stride = stride * size(A, k-1)
         index += (I[k]-1) * stride
     end
@@ -327,71 +304,48 @@ end
 #        end
 #    end
 #end
-function ref{T}(A::Array{T}, ::Type{Colon})
-    X = Array(T, numel(A))
+function ref(A::Array, c::Colon)
+    X = similar(A, numel(A))
     copy_to_unsafe(X, 1, A, 1, numel(A))
 end
-function ref{T}(A::Array{T}, I::Range1{Int})
-    X = Array(T, length(I))
+function ref(A::Array, I::Range1{Int})
+    X = similar(A, length(I))
     copy_to(X, 1, A, first(I), length(I))
 end
-
 # Generic linear indexing
 ref(A::Array, I::Range{Int}) = [ A[i] for i=I ]
 ref(A::Array, I::AbstractVector{Int}) = [ A[i] for i=I ]
 
 # 2d indexing
-function ref{T}(A::Array{T}, ::Type{Colon}, ::Type{Colon})
-    if size(A,1) > 0
-        X = Array(T, size(A,1), div(numel(A,1), size(A,1)))
-        copy_to_unsafe(X, 1, A, 1, numel(A))
-    else
-        sz = size(A)
-        p = sz[2]
-        for i = 3:length(sz)
-            p *= sz[i]
-        end
-        X = Array(T, 0, p)  # no copy needed because the array is empty
-    end
+function ref(A::Array, c1::Colon, c2::Colon)
+    X = similar(A, ref_shape_dims(size(A,1), _numel2(A)))
+    copy_to_unsafe(X, 1, A, 1, numel(A))
 end
-function ref{T}(A::Array{T}, ::Type{Colon}, j::Int)
-    X = Array(T, size(A,1))
+function ref(A::Array, c::Colon, j::Int)
+    X = similar(A, size(A,1))
     copy_to(X, 1, A, (j-1)*size(A,1) + 1, size(A,1))
 end
-function ref{T}(A::Array{T}, ::Type{Colon}, J::Range1{Int})
-    if length(J) > 1
-        X = Array(T, size(A,1), length(J))
-    else
-        X = Array(T, size(A,1))
-    end
+function ref(A::Array, c::Colon, J::Range1{Int})
+    X = similar(A, ref_shape(1:size(A,1), J))
     copy_to(X, 1, A, (first(J)-1)*size(A,1) + 1, size(A,1)*length(J))
 end
-function ref{T}(A::Array{T}, ::Type{Colon}, J::AbstractVector{Int})
-    if length(J) > 1
-        X = Array(T, size(A,1), length(J))
-    else
-        X = Array(T, size(A,1))
-    end
+function ref(A::Array, c::Colon, J::AbstractVector{Int})
+    X = similar(A, ref_shape(1:size(A,1), J))
     dsto = 1
     for j in J
         copy_to(X, dsto, A, (j-1)*size(A,1) + 1, size(A,1))
         dsto += size(A,1)
     end
 end
-function ref{T}(A::Array{T}, I::Range1{Int}, j::Int)
-    if first(I) < 1 || last(I) > size(A,1) || j < 1 || j > size(A,2)
-        throw(BoundsError())
-    end
-    X = Array(T,length(I))
-    copy_to_unsafe(X, 1, A, (j-1)*size(A,1) + 1, length(I))
+function ref(A::Array, I::Range1{Int}, j::Int)
+    X = similar(A,length(I))
+    copy_to(X, 1, A, (j-1)*size(A,1) + 1, length(I))
 end
-function ref{T}(A::Array{T}, I::Range1{Int}, J::Union(Range1{Int},Range{Int}))
-    if first(I) < 1 || last(I) > size(A,1) || first(J) < 1 || last(J) > size(A,2)
-        throw(BoundsError())
-    end
-    X = Array(T, length(I), length(J))
+function ref(A::Array, I::Range1{Int}, J::Union(Range1{Int},Range{Int}))
+    X = similar(A, length(I), length(J))
     if length(I) == size(A,1) && step(J) == 1
-        copy_to_unsafe(X, 1, A, (first(J)-1)*size(A,1) + 1, size(A,1)*length(J))    else
+        copy_to(X, 1, A, (first(J)-1)*size(A,1) + 1, size(A,1)*length(J))
+    else
         for j = J
             copy_to_unsafe(X, 1, A, (j-1)*size(A,1) + 1, length(I))
         end
@@ -400,20 +354,44 @@ end
 ref(A::Array, I::AbstractVector{Int}, j::Int) = [ A[i,j] for i=I ]
 ref(A::Array, i::Int, J::Union(Range1{Int},Range{Int})) = [ A[i,j] for j=J ]
 ref(A::Array, i::Int, J::AbstractVector{Int}) = [ A[i,j] for j=J ]
-ref(A::Array, I::AbstractVector{Int}, J::AbstractVector{Int}) = [ A[i,j] for i=I, j=J ]
+ref(A::Array, I, c::Colon) = ref(A, I, 1:_numel2(A))
+#ref(A::Array, I::AbstractVector{Int}, J::AbstractVector{Int}) = [ A[i,j] for i=I, j=J ]
 
 # Ref for higher dimensions
-#function ref_memcpy_unsafe(X::Array, A::Array, rcopy::Range1{Int}, I::Indices...)
-#end
+typealias IndicesC{T<:Integer} Union(Integer, Colon, AbstractVector{T})
+function ref(A::Array, c1::Colon, c2::Colon, IC::IndicesC...)
+    I = replace_colons(A, 3, IC...)
+    X = similar(A, size(A,1), size(A,2), ref_shape(I...)...)
+    p = size(A,1)*size(A,2)
+    ref_memcpy(X, A, 1:p, p, 2, I...)
+end
+function ref(A::Array, c1::Colon, c2::Colon, c3::Colon, IC::IndicesC...)
+    I = replace_colons(A, 4, IC...)
+    X = similar(A, size(A,1), size(A,2), size(A,3), ref_shape(I)...)
+    p = size(A,1)*size(A,2)*size(A,3)
+    ref_memcpy(X, A, 1:p, p, 3, I...)
+end
+function ref(A::Array, c1::Colon, c2::Colon, c3::Colon, c4::Colon, IC::IndicesC...)
+    I = replace_colons(A, 5, IC...)
+    X = similar(A, size(A,1), size(A,2), size(A,3), size(A,4), ref_shape(I)...)
+    p = size(A,1)*size(A,2)*size(A,3)*size(A,4)
+    ref_memcpy(X, A, 1:p, p, 4, I...)
+end
 
-function ref{T<:Integer}(A::Array, I::AbstractVector{T})
-    X = similar(A, length(I))
-    ind = 1
-    for i in I
-        X[ind] = A[i]
-        ind += 1
+let ref_cache = nothing
+global ref_memcpy
+function ref_memcpy(X::Array, A::Array, rcopy::Range1{Int}, stride1::Int, dimoffset::Int, I::Indices...)
+    if is(ref_cache,nothing)
+        ref_cache = Dict()
     end
+#    println("ref_memcpy: rcopy: ", rcopy, ", stride1: ", stride1, ", indices: ", I)
+    gen_array_index_map(ref_cache, refind -> quote
+            copy_to(X, storeind, A, $refind + ref_offset, N)
+            storeind += N
+        end, I, true, (:A, :X, :storeind, :ref_offset, :N,:stride1,:dimoffset), 
+        A, X, 1, (first(rcopy)-1)*stride1, length(rcopy), stride1, dimoffset)
     return X
+end
 end
 
 let ref_cache = nothing
@@ -428,12 +406,52 @@ function ref(A::Array, I::Indices...)
     gen_array_index_map(ref_cache, refind -> quote
             X[storeind] = A[$refind]
             storeind += 1
-        end, I, (:A, :X, :storeind), A, X, 1)
+        end, I, false, (:A, :X, :storeind), A, X, 1)
     return X
 end
 end
 
 
+
+# Number of elements accounted for by dimensions 2 onward
+function _numel2(A::Array)
+    if size(A,1) > 0
+        return div(numel(A), size(A,1))
+    else
+        # an empty matrix, but preserve the correct dimensions
+        p = size(A,2)
+        for i = 3:ndims(A)
+            p *= size(A,i)
+        end
+        return p
+    end
+end
+function _numeln(A::Array, n::Integer)
+    p = size(A,n)
+    for i = n+1:ndims(A)
+        p *= size(A,i)
+    end
+    return p
+end
+
+# Because an Int is an IndicesC, the next two functions must have
+# different names
+function replace_colon(A::Array, dim::Int, dimlast::Int, ic::IndicesC)
+    if isa(ic, Colon)
+        p = size(A,dim)
+        if dim == dimlast
+            for i = dimlast+1:ndims(A)
+                p *= size(A,i)
+            end
+        end
+        return 1:p
+    else
+        return ic
+    end
+end
+function replace_colons(A::Array, dimstart::Int, IC::IndicesC...)
+    I = ntuple(length(IC), i->replace_colon(A, i+dimstart-1, length(IC)+dimstart-1, IC[i]))
+end
 # logical indexing
 
 function _jl_ref_bool_1d(A::Array, I::AbstractArray{Bool})
@@ -593,6 +611,7 @@ function assign(A::Array, x, I0::Indices, I::Indices...)
                           A[$storeind] = x
                       end,
                       tuple(I0, I...),
+                      false,
                       (:A, :x),
                       A, x)
     return A
@@ -629,6 +648,7 @@ function assign(A::Array, X::AbstractArray, I0::Indices, I::Indices...)
                           refind += 1
                       end,
                       tuple(I0, I...),
+                      false,
                       (:A, :X, :refind),
                       A, X, 1)
     return A

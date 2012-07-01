@@ -15,7 +15,7 @@ if run_ref
         print(n_dims, " dimensions (", n_r, " repeats, ", n_r*n_el, " operations): ")
         print(n_dims, " dimensions (", n_r, " repeats): ")
         @time for i = 1:n_r
-            B = A[:]
+            B = ref(A, :)
         end
     end
     println("Big arrays:")
@@ -28,7 +28,7 @@ if run_ref
         print(n_dims, " dimensions (", n_r, " repeats, ", n_r*n_el, " operations): ")
         print(n_dims, " dimensions (", n_r, " repeats): ")
         @time for i = 1:n_r
-            B = A[:]
+            B = ref(A, :)
         end
     end
     println("\n")
@@ -38,26 +38,28 @@ if run_ref
     for n_dims in 1:10
         sz = ntuple(n_dims,i->lensmall)
         A = randn(sz)
-        ind = ntuple(n_dims,i -> ((i <= ceil(n_dims/2)) ? (1:sz[i]) : (randi(sz[i]))))
-        n_el = prod(map(length,ind))
+        ind = ntuple(n_dims,i -> ((i <= ceil(n_dims/2)) ? Colon() : (randi(sz[i]))))
+        indc = replace_colons(A, 1, ind...)
+        n_el = prod(map(length,indc))
         n_r = iceil(n_evals/n_el)
         print(n_dims, " dimensions (", n_r, " repeats, ", n_r*n_el, " operations): ")
         @time for i = 1:n_r
             #        ind = ntuple(n_dims,i -> ((i <= n_dims/2) ? (1:sz[i]) : (randi(sz[i]))))
-            B = A[ind...]
+            B = ref(A, ind...)
         end
     end
     println("Big arrays:")
     for n_dims in 1:length(lenbig)
         sz = ntuple(n_dims,i->lenbig[n_dims])
         A = randn(sz)
-        ind = ntuple(n_dims,i -> ((i <= ceil(n_dims/2)) ? (1:sz[i]) : (randi(sz[i]))))
-        n_el = prod(map(length,ind))
+        ind = ntuple(n_dims,i -> ((i <= ceil(n_dims/2)) ? Colon() : (randi(sz[i]))))
+        indc = replace_colons(A, 1, ind...)
+        n_el = prod(map(length,indc))
         n_r = iceil(n_evals/n_el)
         print(n_dims, " dimensions (", n_r, " repeats, ", n_r*n_el, " operations): ")
         @time for i = 1:n_r
             #        ind = ntuple(n_dims,i -> ((i <= n_dims/2) ? (1:sz[i]) : (randi(sz[i]))))
-            B = A[ind...]
+            B = ref(A, ind...)
         end
     end
     println("\n")
@@ -67,26 +69,28 @@ if run_ref
     for n_dims in 1:10
         sz = ntuple(n_dims,i->lensmall)
         A = randn(sz)
-        ind = ntuple(n_dims,i -> ((i > n_dims/2) ? (1:sz[i]) : (randi(sz[i]))))
-        n_el = prod(map(length,ind))
+        ind = ntuple(n_dims,i -> ((i > n_dims/2) ? Colon() : (randi(sz[i]))))
+        indc = replace_colons(A, 1, ind...)
+        n_el = prod(map(length,indc))
         n_r = iceil(n_evals/n_el)
         print(n_dims, " dimensions (", n_r, " repeats, ", n_r*n_el, " operations): ")
         @time for i = 1:n_r
             #        ind = ntuple(n_dims,i -> ((i <= n_dims/2) ? (1:sz[i]) : (randi(sz[i]))))
-            B = A[ind...]
+            B = ref(A, indc...)
         end
     end
     println("Big arrays:")
     for n_dims in 1:length(lenbig)
         sz = ntuple(n_dims,i->lenbig[n_dims])
         A = randn(sz)
-        ind = ntuple(n_dims,i -> ((i > n_dims/2) ? (1:sz[i]) : (randi(sz[i]))))
-        n_el = prod(map(length,ind))
+        ind = ntuple(n_dims,i -> ((i > n_dims/2) ? Colon() : (randi(sz[i]))))
+        indc = replace_colons(A, 1, ind...)
+        n_el = prod(map(length,indc))
         n_r = iceil(n_evals/n_el)
         print(n_dims, " dimensions (", n_r, " repeats, ", n_r*n_el, " operations): ")
         @time for i = 1:n_r
             #        ind = ntuple(n_dims,i -> ((i <= n_dims/2) ? (1:sz[i]) : (randi(sz[i]))))
-            B = A[ind...]
+            B = ref(A, indc...)
         end
     end
     println("\n")
@@ -104,12 +108,13 @@ if run_ref
         sz = ntuple(n_dims,i->lensmall)
         A = randn(sz)
         ind = ntuple(n_dims,i->randind(sz[i]))
-        n_el = prod(map(length,ind))
+        indc = replace_colons(A, 1, ind...)
+        n_el = prod(map(length,indc))
         n_r = iceil(n_evals/n_el)
         print(n_dims, " dimensions (", n_r, " repeats, ", n_r*n_el, " operations): ")
         @time for i = 1:n_r
             #        ind = ntuple(n_dims,i->randind(sz[i]))
-            B = A[ind...]
+            B = ref(A, indc...)
         end
     end
     println("Big arrays:")
@@ -117,12 +122,13 @@ if run_ref
         sz = ntuple(n_dims,i->lenbig[n_dims])
         A = randn(sz)
         ind = ntuple(n_dims,i->randind(sz[i]))
-        n_el = prod(map(length,ind))
+        indc = replace_colons(A, 1, ind...)
+        n_el = prod(map(length,indc))
         n_r = iceil(n_evals/n_el)
         print(n_dims, " dimensions (", n_r, " repeats, ", n_r*n_el, " operations): ")
         @time for i = 1:n_r
             #        ind = ntuple(n_dims,i->randind(sz[i]))
-            B = A[ind...]
+            B = ref(A, indc...)
         end
     end
 end

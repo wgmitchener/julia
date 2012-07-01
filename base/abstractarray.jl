@@ -270,33 +270,63 @@ end
 #            end
 #        end
 #    end
-function make_arrayind_loop_nest(loopvars, offsetvars, stridevars, linearind, ranges, body, arrayname)
+#
+# If isskippingdims == true, you need two additional integer variables
+# defined: stride1 and dimoffset
+function make_arrayind_loop_nest(loopvars, offsetvars, stridevars, linearind, ranges, body, arrayname, isskippingdims::Bool)
     # Initialize: calculate the strides
     offset = offsetvars[end]
     s = stridevars[1]
-    exinit = quote
-        $offset = 0
-        $s = 1
-    end
-    for i = 2:length(ranges)
-        sprev = s
-        s = stridevars[i]
+    if isskippingdims
         exinit = quote
-            $exinit
-            $s = $sprev * size($arrayname, $i-1)
+            $offset = 0
+            $s = stride1
+        end
+        for i = 2:length(ranges)
+            sprev = s
+            s = stridevars[i]
+            exinit = quote
+                $exinit
+                $s = $sprev * size($arrayname, dimoffset + $(i-1))
+            end
+        end
+    else
+        exinit = quote
+            $offset = 0
+            $s = 1
+        end
+        for i = 2:length(ranges)
+            sprev = s
+            s = stridevars[i]
+            exinit = quote
+                $exinit
+                $s = $sprev * size($arrayname, $(i-1))
+            end
         end
     end
     # Build the innermost loop (iterating over the first index)
     v = loopvars[1]
     r = ranges[1]
     offset = offsetvars[1]
-    exloop = quote
-        for ($v) = ($r)
-            $linearind = $offset + $v
-            $body
+    if isskippingdims
+        exloop = quote
+            for ($v) = ($r)
+                $linearind = $offset + ($v-1)*stride1 + 1
+#                println("inner v: ", $v, ", s: ", stride1, ", linearind: ", $linearind)
+                $body
+            end
+        end
+    else
+        # When stride1=1, this version saves one multiply and two adds
+        # per iteration
+        exloop = quote
+            for ($v) = ($r)
+                $linearind = $offset + $v
+                $body
+            end
         end
     end
-    # Build the remaining loops
+    # Build the remaining (outer) loops
     for i = 2:length(ranges)
         v = loopvars[i]
         r = ranges[i]
@@ -306,6 +336,7 @@ function make_arrayind_loop_nest(loopvars, offsetvars, stridevars, linearind, ra
         exloop = quote
             for ($v) = ($r)
                 $offset = $offsetprev + ($v - 1) * $s
+ #               println("outer v: ", $v, ", s: ", $s, ", offset: ", $offset)
                 $exloop
             end
         end
@@ -328,7 +359,7 @@ end
 #   - exargnames[1] must be the array for which the linear index is
 #     being created (it is used to calculate the strides, which in
 #     turn are used for computing the linear index)
-function gen_array_index_map(cache, genbody, ranges, exargnames, exargs...)
+function gen_array_index_map(cache, genbody, ranges, isskippingdims::Bool, exargnames, exargs...)
     N = length(ranges)
     if !has(cache,N)
         dimargnames = gensym(N)
@@ -340,7 +371,7 @@ function gen_array_index_map(cache, genbody, ranges, exargnames, exargs...)
         fexpr = quote
             local _F_
             function _F_($(dimargnames...), $(exargnames...))
-                $make_arrayind_loop_nest(loopvars, offsetvars, stridevars, linearind, dimargnames, body, exargnames[1])
+                $make_arrayind_loop_nest(loopvars, offsetvars, stridevars, linearind, dimargnames, body, exargnames[1], isskippingdims)
             end
             return _F_
         end

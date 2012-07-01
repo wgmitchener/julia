@@ -180,6 +180,16 @@ function ref_shape(I...)
     while n > 0 && isa(I[n],Real); n-=1; end
     ntuple(n, i->length(I[i]))
 end
+# shape of array to create for ref() with dimensions dims
+function ref_shape_dims(dims::Dims)
+    if dims[end] != 1
+        return dims  # avoids memory allocation
+    else
+        n = length(dims)-1
+        while dims[n] == 1; n-=1; end
+        return dims[1:n]
+    end
+end
 
 ref_shape(i::Real) = ()
 ref_shape(i)       = (length(i),)
