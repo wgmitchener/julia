@@ -77,14 +77,20 @@ jl_value_t *jl_eval_module_expr(jl_expr_t *ex, int *plineno)
     JL_GC_POP();
     jl_current_module = last_module;
 
-    // remove non-exported macros
     size_t i;
     void **table = newm->bindings.table;
     for(i=1; i < newm->bindings.size; i+=2) {
         if (table[i] != HT_NOTFOUND) {
             jl_binding_t *b = (jl_binding_t*)table[i];
+            // remove non-exported macros
             if (b->name->name[0]=='@' && !b->exportp)
                 b->value = NULL;
+            // error for unassigned exports
+            /*
+            if (b->exportp && b->owner==newm && b->value==NULL)
+                jl_errorf("identifier %s exported from %s is not initialized",
+                          b->name->name, newm->name->name);
+            */
         }
     }
     return jl_nothing;
@@ -370,6 +376,7 @@ void jl_set_tag_type_super(jl_tag_type_t *tt, jl_value_t *super)
 // method definition ----------------------------------------------------------
 
 extern int jl_boot_file_loaded;
+void jl_add_constructors(jl_struct_type_t *t);
 
 jl_value_t *jl_method_def(jl_sym_t *name, jl_value_t **bp, jl_binding_t *bnd,
                           jl_tuple_t *argtypes, jl_function_t *f, jl_tuple_t *t)
@@ -384,13 +391,26 @@ jl_value_t *jl_method_def(jl_sym_t *name, jl_value_t **bp, jl_binding_t *bnd,
     }
     else {
         gf = *bp;
-        if (!jl_is_gf(gf))
-            jl_error("invalid method definition: not a generic function");
+        if (!jl_is_gf(gf)) {
+            if (jl_is_struct_type(gf) &&
+                ((jl_function_t*)gf)->fptr == jl_f_ctor_trampoline) {
+                jl_add_constructors((jl_struct_type_t*)gf);
+            }
+            if (!jl_is_gf(gf)) {
+                jl_error("invalid method definition: not a generic function");
+            }
+        }
     }
     JL_GC_PUSH(&gf);
     assert(jl_is_function(f));
     assert(jl_is_tuple(argtypes));
+    assert(jl_is_tuple(t));
     jl_check_type_tuple(argtypes, name, "method definition");
+    for(size_t i=0; i < t->length; i++) {
+        if (!jl_is_typevar(jl_tupleref(t,i)))
+            jl_type_error_rt(name->name, "method definition",
+                             (jl_value_t*)jl_tvar_type, jl_tupleref(t,i));
+    }
     jl_add_method((jl_function_t*)gf, argtypes, f, t);
     if (jl_boot_file_loaded &&
         f->linfo && f->linfo->ast && jl_is_expr(f->linfo->ast)) {

@@ -16,6 +16,20 @@ size(a::Array, d) = arraysize(a, d)
 size(a::Matrix) = (arraysize(a,1), arraysize(a,2))
 length(a::Array) = arraylen(a)
 
+function stride(a::Array, i::Integer)
+    s = 1
+    if i > ndims(a)
+        return numel(a)
+    end
+    for n=1:(i-1)
+        s *= size(a, n)
+    end
+    return s
+end
+strides{T}(a::Array{T,1}) = (1,)
+strides{T}(a::Array{T,2}) = (1, size(a,1))
+strides{T}(a::Array{T,3}) = (1, size(a,1), size(a,1)*size(a,2))
+
 ## copy ##
 
 function copy_to{T}(dest::Array{T}, dsto, src::Array{T}, so, N)
@@ -24,20 +38,68 @@ function copy_to{T}(dest::Array{T}, dsto, src::Array{T}, so, N)
     end
     copy_to_unsafe(dest, dsto, src, so, N)
 end
-# @Jeff: is this split needed?
+
 function copy_to_unsafe{T}(dest::Array{T}, dsto, src::Array{T}, so, N)
     if isa(T, BitsKind)
         ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
               pointer(dest, dsto), pointer(src, so), N*sizeof(T))
     else
         for i=0:N-1
-            dest[i+dsto] = src[i+so]
+            # NOTE: this works around the performance problem caused by all
+            # the doubled definitions of assign()
+            arrayset(dest, i+dsto, src[i+so])
         end
     end
     return dest
 end
 
 copy_to{T}(dest::Array{T}, src::Array{T}) = copy_to(dest, 1, src, 1, numel(src))
+
+function copy_to{R,S}(B::Matrix{R}, ir_dest::Range1{Int}, jr_dest::Range1{Int}, A::StridedMatrix{S}, ir_src::Range1{Int}, jr_src::Range1{Int})
+    if length(ir_dest) != length(ir_src) || length(jr_dest) != length(jr_src)
+        error("copy_to: size mismatch")
+    end
+    check_bounds(B, ir_dest, jr_dest)
+    check_bounds(A, ir_src, jr_src)
+    jdest = first(jr_dest)
+    Askip = size(A, 1)
+    Bskip = size(B, 1)
+    if stride(A, 1) == 1 && R == S
+        for jsrc in jr_src
+            copy_to(B, (jdest-1)*Bskip+first(ir_dest), A, (jsrc-1)*Askip+first(ir_src), length(ir_src))
+            jdest += 1
+        end
+    else
+        for jsrc in jr_src
+            aoffset = (jsrc-1)*Askip
+            boffset = (jdest-1)*Bskip
+            idest = first(ir_dest)
+            for isrc in ir_src
+                B[boffset+idest] = A[aoffset+isrc]
+                idest += 1
+            end
+            jdest += 1
+        end
+    end
+end
+function copy_to_transpose{R,S}(B::Matrix{R}, ir_dest::Range1{Int}, jr_dest::Range1{Int}, A::StridedMatrix{S}, ir_src::Range1{Int}, jr_src::Range1{Int})
+    if length(ir_dest) != length(jr_src) || length(jr_dest) != length(ir_src)
+        error("copy_to: size mismatch")
+    end
+    check_bounds(B, ir_dest, jr_dest)
+    check_bounds(A, ir_src, jr_src)
+    idest = first(ir_dest)
+    Askip = size(A, 1)
+    for jsrc in jr_src
+        offset = (jsrc-1)*Askip
+        jdest = first(jr_dest)
+        for isrc in ir_src
+            B[idest,jdest] = A[offset+isrc]
+            jdest += 1
+        end
+        idest += 1
+    end
+end
 
 function reinterpret{T,S}(::Type{T}, a::Array{S,1})
     nel = int(div(numel(a)*sizeof(S),sizeof(T)))
@@ -211,12 +273,12 @@ end
 
 check_bounds(A::AbstractVector, I::Indices) = check_bounds(length(A), I)
 
-function check_bounds(A::Matrix, I::Indices, J::Indices)
+function check_bounds(A::AbstractMatrix, I::Indices, J::Indices)
     check_bounds(size(A,1), I)
     check_bounds(size(A,2), J)
 end
 
-function check_bounds(A::Array, I::Indices, J::Indices)
+function check_bounds(A::AbstractArray, I::Indices, J::Indices)
     check_bounds(size(A,1), I)
     sz = size(A,2)
     for i = 3:ndims(A)
@@ -225,7 +287,7 @@ function check_bounds(A::Array, I::Indices, J::Indices)
     check_bounds(sz, J)
 end
 
-function check_bounds(A::Array, I::Indices...)
+function check_bounds(A::AbstractArray, I::Indices...)
     n = length(I)
     if n > 0
         for dim = 1:(n-1)
@@ -386,32 +448,20 @@ ref{T<:Integer}(A::Matrix, I::AbstractVector{Bool}, J::AbstractVector{T}) = A[fi
 
 ## Indexing: assign ##
 # Jeff: begin fixme #996
-assign(A::Array{Any}, x::AbstractArray, i::Integer) = arrayset(A,int(i),x)
 assign(A::Array{Any}, x::ANY, i::Integer) = arrayset(A,int(i),x)
-assign{T}(A::Array{T}, x::AbstractArray, i::Integer) = arrayset(A,int(i),convert(T, x))
 assign{T}(A::Array{T}, x, i::Integer) = arrayset(A,int(i),convert(T, x))
 assign{T}(A::Array{T,0}, x) = arrayset(A,1,convert(T, x))
 
 assign(A::Array, x, i0::Integer, i1::Integer) =
     assign(A, x, i0 + size(A,1)*(i1-1))
-assign(A::Array, x::AbstractArray, i0::Integer, i1::Integer) =
-    assign(A, x, i0 + size(A,1)*(i1-1))
 
 assign(A::Array, x, i0::Integer, i1::Integer, i2::Integer) =
-    assign(A, x, i0 + size(A,1)*((i1-1) + size(A,2)*(i2-1)))
-assign(A::Array, x::AbstractArray, i0::Integer, i1::Integer, i2::Integer) =
     assign(A, x, i0 + size(A,1)*((i1-1) + size(A,2)*(i2-1)))
 
 assign(A::Array, x, i0::Integer, i1::Integer, i2::Integer, i3::Integer) =
     assign(A, x, i0 + size(A,1)*((i1-1) + size(A,2)*((i2-1) + size(A,3)*(i3-1))))
-assign(A::Array, x::AbstractArray, i0::Integer, i1::Integer, i2::Integer, i3::Integer) =
-    assign(A, x, i0 + size(A,1)*((i1-1) + size(A,2)*((i2-1) + size(A,3)*(i3-1))))
 
-assign(A::Array, x, I0::Integer, I::Integer...) = assign_scalarND(A,x,I0,I...)
-assign(A::Array, x::AbstractArray, I0::Integer, I::Integer...) =
-    assign_scalarND(A,x,I0,I...)
-
-function assign_scalarND(A, x, I0::Integer, I::Integer...)
+function assign(A::Array, x, I0::Integer, I::Integer...)
     index = I0
     stride = 1
     for k=1:length(I)
@@ -449,19 +499,18 @@ end
 function assign{T<:Integer}(A::Array, x, i::Integer, J::AbstractVector{T})
     check_bounds(A, i, J)
     m = size(A, 1)
-    for j in J
-        A[(j-1)*m + i] = x
-    end
-    return A
-end
-function assign{T<:Integer}(A::Array, X::AbstractArray, i::Integer, J::AbstractVector{T})
-    check_bounds(A, i, J)
-    if length(X) != length(J); error("argument dimensions must match"); end
-    m = size(A, 1)
-    count = 1
-    for j in J
-        A[(j-1)*m + i] = X[count]
-        count += 1
+    if !isa(x,AbstractArray)
+        for j in J
+            A[(j-1)*m + i] = x
+        end
+    else
+        X = x
+        if length(X) != length(J); error("argument dimensions must match"); end
+        count = 1
+        for j in J
+            A[(j-1)*m + i] = X[count]
+            count += 1
+        end
     end
     return A
 end
@@ -470,8 +519,19 @@ function assign{T<:Integer}(A::Array, x, I::AbstractVector{T}, j::Integer)
     check_bounds(A, I, j)
     m = size(A, 1)
     offset = (j-1)*m
-    for i in I
-        A[offset + i] = x
+
+    if !isa(x,AbstractArray)
+        for i in I
+            A[offset + i] = x
+        end
+    else
+        X = x
+        if length(X) != length(I); error("argument dimensions must match"); end
+        count = 1
+        for i in I
+            A[offset + i] = X[count]
+            count += 1
+        end
     end
     return A
 end
@@ -483,150 +543,118 @@ function assign{T}(A::Array{T}, X::Array{T}, I::Range1{Int}, j::Integer)
     return A
 end
 
-function assign{T<:Integer}(A::Array, X::AbstractArray, I::AbstractVector{T}, j::Integer)
-    check_bounds(A, I, j)
-    if length(X) != length(I); error("argument dimensions must match"); end
-    m = size(A, 1)
-    offset = (j-1)*m
-    count = 1
-    for i in I
-        A[offset + i] = X[count]
-        count += 1
+function assign{T}(A::Array{T}, X::Array{T}, I::Range1{Int}, J::Range1{Int})
+    check_bounds(A, I, J)
+    nel = length(I)*length(J)
+    if length(X) != nel ||
+        (ndims(X) > 1 && (size(X,1)!=length(I) || size(X,2)!=length(J)))
+        error("argument dimensions must match")
+    end
+    if length(I) == size(A,1)
+        copy_to_unsafe(A, first(I) + (first(J)-1)*size(A,1), X, 1, size(A,1)*length(J))
+    else
+        refoffset = 1
+        for j = J
+            copy_to_unsafe(A, first(I) + (j-1)*size(A,1), X, refoffset, length(I))
+            refoffset += length(I)
+        end
     end
     return A
 end
 
-# These have to be specialized because the Bool operations below are
-# written in terms of Matrix
-for TA in (Matrix, Array)
-    @eval begin
-        function assign{T}(A::($TA){T}, X::Array{T}, I::Range1{Int}, J::Range1{Int})
-            check_bounds(A, I, J)
-            nel = length(I)*length(J)
-            if length(X) != nel ||
-                (ndims(X) > 1 && (size(X,1)!=length(I) || size(X,2)!=length(J)))
-                error("argument dimensions must match")
-            end
-            if length(I) == size(A,1)
-                copy_to_unsafe(A, first(I) + (first(J)-1)*size(A,1), X, 1, size(A,1)*length(J))
-            else
-                refoffset = 1
-                for j = J
-                    copy_to_unsafe(A, first(I) + (j-1)*size(A,1), X, refoffset, length(I))
-                    refoffset += length(I)
-                end
-            end
-            return A
-        end
+function assign{T}(A::Array{T}, X::Array{T}, I::Range1{Int}, J::AbstractVector{Int})
+    check_bounds(A, I, J)
+    nel = length(I)*length(J)
+    if length(X) != nel ||
+        (ndims(X) > 1 && (size(X,1)!=length(I) || size(X,2)!=length(J)))
+        error("argument dimensions must match")
     end
-end
-
-for TA in (Matrix, Array)
-    @eval begin
-        function assign{T}(A::($TA){T}, X::Array{T}, I::Range1{Int}, J::AbstractVector{Int})
-            check_bounds(A, I, J)
-            nel = length(I)*length(J)
-            if length(X) != nel ||
-                (ndims(X) > 1 && (size(X,1)!=length(I) || size(X,2)!=length(J)))
-                error("argument dimensions must match")
-            end
-            refoffset = 1
-            for j = J
-                copy_to_unsafe(A, first(I) + (j-1)*size(A,1), X, refoffset, length(I))
-                refoffset += length(I)
-            end
-            return A
-        end
+    refoffset = 1
+    for j = J
+        copy_to_unsafe(A, first(I) + (j-1)*size(A,1), X, refoffset, length(I))
+        refoffset += length(I)
     end
+    return A
 end
 
 function assign{T<:Integer}(A::Array, x, I::AbstractVector{T}, J::AbstractVector{T})
     check_bounds(A, I, J)
     m = size(A, 1)
-    for j in J
-        offset = (j-1)*m
-        for i in I
-            A[offset + i] = x
+    if !isa(x,AbstractArray)
+        for j in J
+            offset = (j-1)*m
+            for i in I
+                A[offset + i] = x
+            end
+        end
+    else
+        X = x
+        nel = length(I)*length(J)
+        if length(X) != nel ||
+            (ndims(X) > 1 && (size(X,1)!=length(I) || size(X,2)!=length(J)))
+            error("argument dimensions must match")
+        end
+        count = 1
+        for j in J
+            offset = (j-1)*m
+            for i in I
+                A[offset + i] = X[count]
+                count += 1
+            end
         end
     end
     return A
 end
 
-for TA in (Matrix, Array)
-    @eval begin
-        function assign{T<:Integer}(A::($TA), X::AbstractArray, I::AbstractVector{T}, J::AbstractVector{T})
-            check_bounds(A, I, J)
-            nel = length(I)*length(J)
-            if length(X) != nel ||
-                (ndims(X) > 1 && (size(X,1)!=length(I) || size(X,2)!=length(J)))
-                error("argument dimensions must match")
-            end
-            m = size(A, 1)
-            count = 1
-            for j in J
-                offset = (j-1)*m
-                for i in I
-                    A[offset + i] = X[count]
-                    count += 1
-                end
-            end
-            return A
-        end
-    end
-end
-
-let assign_cache = nothing
+let assign_cache = nothing, assign_scalar_cache = nothing
 global assign
 function assign(A::Array, x, I0::Indices, I::Indices...)
     check_bounds(A, I0, I...)
     I0 = indices(I0)
     I = indices(I)
-    if is(assign_cache,nothing)
-        assign_cache = Dict()
-    end
-    gen_array_index_map(assign_cache, storeind -> quote
-                          A[$storeind] = x
-                      end,
-                      tuple(I0, I...),
-                      (:A, :x),
-                      A, x)
-    return A
-end
-end
-
-let assign_cache = nothing
-global assign
-function assign(A::Array, X::AbstractArray, I0::Indices, I::Indices...)
-    check_bounds(A, I0, I...)
-    I0 = indices(I0)
-    I = indices(I)
-    nel = length(I0)
-    for idx in I
-        nel *= length(idx)
-    end
-    if length(X) != nel
-        error("argument dimensions must match")
-    end
-    if ndims(X) > 1
-        if size(X,1) != length(I0)
+    if !isa(x,AbstractArray)
+        if is(assign_scalar_cache,nothing)
+            assign_scalar_cache = Dict()
+        end
+        gen_array_index_map(assign_scalar_cache, storeind -> quote
+                              A[$storeind] = x
+                            end,
+                            tuple(I0, I...),
+                            (:A, :x),
+                            A, x)
+    else
+        if is(assign_cache,nothing)
+            assign_cache = Dict()
+        end
+        X = x
+        nel = length(I0)
+        for idx in I
+            nel *= length(idx)
+        end
+        if length(X) != nel
             error("argument dimensions must match")
         end
-        for i = 1:length(I)
-            if size(X,i+1) != length(I[i])
+        if ndims(X) > 1
+            if size(X,1) != length(I0)
                 error("argument dimensions must match")
             end
+            for i = 1:length(I)
+                if size(X,i+1) != length(I[i])
+                    error("argument dimensions must match")
+                end
+            end
         end
+        if is(assign_cache,nothing)
+            assign_cache = Dict()
+        end
+        gen_array_index_map(assign_cache, storeind -> quote
+                              A[$storeind] = X[refind]
+                              refind += 1
+                            end,
+                            tuple(I0, I...),
+                            (:A, :X, :refind),
+                            A, X, 1)
     end
-    if is(assign_cache,nothing)
-        assign_cache = Dict()
-    end
-    gen_array_index_map(assign_cache, storeind -> quote
-                          A[$storeind] = X[refind]
-                          refind += 1
-                      end,
-                      tuple(I0, I...),
-                      (:A, :X, :refind),
-                      A, X, 1)
     return A
 end
 end
@@ -660,20 +688,15 @@ assign(A::Array, X::AbstractArray, I::AbstractArray{Bool}) = _jl_assign_bool_vec
 assign(A::Array, x, I::AbstractVector{Bool}) = _jl_assign_bool_scalar_1d(A, x, I)
 assign(A::Array, x, I::AbstractArray{Bool}) = _jl_assign_bool_scalar_1d(A, x, I)
 
-assign(A::Matrix, x::AbstractArray, I::Integer, J::AbstractVector{Bool}) = assign(A, x, I,find(J))
-assign(A::Matrix, x, I::Integer, J::AbstractVector{Bool}) = assign(A, x, I,find(J))
+assign(A::Array, x, I::Integer, J::AbstractVector{Bool}) = assign(A, x, I,find(J))
 
-assign(A::Matrix, x::AbstractArray, I::AbstractVector{Bool}, J::Integer) = assign(A, x, find(I),J)
-assign(A::Matrix, x, I::AbstractVector{Bool}, J::Integer) = assign(A,x,find(I),J)
+assign(A::Array, x, I::AbstractVector{Bool}, J::Integer) = assign(A,x,find(I),J)
 
-assign(A::Matrix, x::AbstractArray, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = assign(A, x, find(I),find(J))
-assign(A::Matrix, x, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = assign(A, x, find(I),find(J))
+assign(A::Array, x, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = assign(A, x, find(I),find(J))
 
-assign{T<:Integer}(A::Matrix, x::AbstractArray, I::AbstractVector{T}, J::AbstractVector{Bool}) = assign(A, x, I,find(J))
-assign{T<:Integer}(A::Matrix, x, I::AbstractVector{T}, J::AbstractVector{Bool}) = assign(A, x, I,find(J))
+assign{T<:Integer}(A::Array, x, I::AbstractVector{T}, J::AbstractVector{Bool}) = assign(A, x, I,find(J))
 
-assign{T<:Integer}(A::Matrix, x::AbstractArray, I::AbstractVector{Bool}, J::AbstractVector{T}) = assign(A, x, find(I),J)
-assign{T<:Integer}(A::Matrix, x, I::AbstractVector{Bool}, J::AbstractVector{T}) = assign(A, x, find(I),J)
+assign{T<:Integer}(A::Array, x, I::AbstractVector{Bool}, J::AbstractVector{T}) = assign(A, x, find(I),J)
 
 ## Dequeue functionality ##
 
@@ -702,18 +725,6 @@ function append!{T}(a::Array{T,1}, items::Array{T,1})
     ccall(:jl_array_grow_end, Void, (Any, Uint), a, n)
     a[end-n+1:end] = items
     return a
-end
-
-function append{T}(a::Array{T,1}, items::Array{T,1})
-    if is(T,None)
-        error("[] cannot grow. Instead, initialize the array with \"T[]\".")
-    end
-    n0 = length(a)
-    n1 = length(items)
-    r = Array(T, n0 + n1)
-    r[1:n0] = a
-    r[n0+1:n0+n1] = items
-    return r
 end
 
 function grow(a::Vector, n::Integer)
@@ -1013,7 +1024,7 @@ end
 function slicedim(A::Array, d::Integer, i::Integer)
     d_in = size(A)
     leading = d_in[1:(d-1)]
-    d_out = append(leading, (1,), d_in[(d+1):end])
+    d_out = tuple(leading..., 1, d_in[(d+1):end]...)
 
     M = prod(leading)
     N = numel(A)
@@ -1144,6 +1155,28 @@ function reverse!(v::StridedVector)
         r -= 1
     end
     v
+end
+
+function vcat{T}(arrays::Array{T,1}...)
+    n = 0
+    for a in arrays
+        n += length(a)
+    end
+    arr = Array(T, n)
+    ptr = pointer(arr)
+    offset = 0
+    if isa(T,BitsKind)
+        elsz = sizeof(T)
+    else
+        elsz = div(WORD_SIZE,8)
+    end
+    for a in arrays
+        nba = length(a)*elsz
+        ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
+              ptr+offset, a, nba)
+        offset += nba
+    end
+    return arr
 end
 
 ## find ##
@@ -1301,7 +1334,7 @@ end
 
 contains(s::Number, n::Number) = (s == n)
 
-areduce{T}(f::Function, A::StridedArray{T}, region::Region, v0) =
+areduce{T}(f::Function, A::StridedArray{T}, region::Dimspec, v0) =
     areduce(f,A,region,v0,T)
 
 # TODO:
@@ -1310,11 +1343,11 @@ areduce{T}(f::Function, A::StridedArray{T}, region::Region, v0) =
 let areduce_cache = nothing
 # generate the body of the N-d loop to compute a reduction
 function gen_areduce_func(n, f)
-    ivars = { gensym() for i=1:n }
+    ivars = { symbol(string("i",i)) for i=1:n }
     # limits and vars for reduction loop
-    lo    = { gensym() for i=1:n }
-    hi    = { gensym() for i=1:n }
-    rvars = { gensym() for i=1:n }
+    lo    = { symbol(string("lo",i)) for i=1:n }
+    hi    = { symbol(string("hi",i)) for i=1:n }
+    rvars = { symbol(string("r",i)) for i=1:n }
     setlims = { quote
         # each dim of reduction is either 1:sizeA or ivar:ivar
         if contains(region,$i)
@@ -1345,7 +1378,7 @@ function gen_areduce_func(n, f)
 end
 
 global areduce
-function areduce(f::Function, A::StridedArray, region::Region, v0, RType::Type)
+function areduce(f::Function, A::StridedArray, region::Dimspec, v0, RType::Type)
     dimsA = size(A)
     ndimsA = ndims(A)
     dimsR = ntuple(ndimsA, i->(contains(region, i) ? 1 : dimsA[i]))
@@ -1446,18 +1479,18 @@ function max{T<:Integer}(A::StridedArray{T})
     v
 end
 
-max{T}(A::StridedArray{T}, b::(), region::Region) = areduce(max,A,region,typemin(T),T)
-min{T}(A::StridedArray{T}, b::(), region::Region) = areduce(min,A,region,typemax(T),T)
-sum{T}(A::StridedArray{T}, region::Region)  = areduce(+,A,region,zero(T))
-prod{T}(A::StridedArray{T}, region::Region) = areduce(*,A,region,one(T))
+max{T}(A::StridedArray{T}, b::(), region::Dimspec) = areduce(max,A,region,typemin(T),T)
+min{T}(A::StridedArray{T}, b::(), region::Dimspec) = areduce(min,A,region,typemax(T),T)
+sum{T}(A::StridedArray{T}, region::Dimspec)  = areduce(+,A,region,zero(T))
+prod{T}(A::StridedArray{T}, region::Dimspec) = areduce(*,A,region,one(T))
 
-all(A::StridedArray{Bool}, region::Region) = areduce(all,A,region,true)
-any(A::StridedArray{Bool}, region::Region) = areduce(any,A,region,false)
-sum(A::StridedArray{Bool}, region::Region) = areduce(+,A,region,0,Int)
+all(A::StridedArray{Bool}, region::Dimspec) = areduce(all,A,region,true)
+any(A::StridedArray{Bool}, region::Dimspec) = areduce(any,A,region,false)
+sum(A::StridedArray{Bool}, region::Dimspec) = areduce(+,A,region,0,Int)
 sum(A::StridedArray{Bool}) = count(A)
 prod(A::StridedArray{Bool}) =
     error("use all() instead of prod() for boolean arrays")
-prod(A::StridedArray{Bool}, region::Region) =
+prod(A::StridedArray{Bool}, region::Dimspec) =
     error("use all() instead of prod() for boolean arrays")
 
 ## map over arrays ##
@@ -1619,7 +1652,7 @@ end
 
 function transpose{T<:Union(Float64,Float32,Complex128,Complex64)}(A::Matrix{T})
     if numel(A) > 50000
-        return _jl_fftw_transpose(reshape(A, size(A, 2), size(A, 1)))
+        return FFTW.transpose(reshape(A, size(A, 2), size(A, 1)))
     else
         return [ A[j,i] for i=1:size(A,2), j=1:size(A,1) ]
     end
@@ -1659,9 +1692,14 @@ function permute(A::StridedArray, perm)
     end
     offset = 1-offset
 
+    if isa(A,SubArray)
+        offset += (A.first_index-1)
+        A = A.parent
+    end
+
     function permute_one(ivars)
         len = length(ivars)
-        counts = { gensym() for i=1:len}
+        counts = { symbol(string("count",i)) for i=1:len}
         toReturn = cell(len+1,2)
         for i = 1:numel(toReturn)
             toReturn[i] = nothing

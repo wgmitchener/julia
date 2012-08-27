@@ -6,7 +6,6 @@ symbol(a::Array{Uint8,1}) =
     ccall(:jl_symbol_n, Any, (Ptr{Uint8}, Int32), a, length(a))::Symbol
 
 gensym() = ccall(:jl_gensym, Any, ())::Symbol
-gensym(n::Integer) = ntuple(n, i->gensym())
 
 gensym(s::ASCIIString) = gensym(s.data)
 gensym(s::UTF8String) = gensym(s.data)
@@ -56,13 +55,10 @@ function show(io, tv::TypeVar)
 end
 
 expand(x) = ccall(:jl_expand, Any, (Any,), x)
+macroexpand(x) = ccall(:jl_macroexpand, Any, (Any,), x)
 
 ## misc syntax ##
 
 macro eval(x)
     :(eval($expr(:quote,x)))
-end
-
-macro task(ex)
-    :(Task(()->$esc(ex)))
 end

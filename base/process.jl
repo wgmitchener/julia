@@ -64,10 +64,10 @@ isequal(p1::PipeEnd, p2::PipeEnd) = false
 isequal(p1::PipeIn , p2::PipeIn ) = (p1.pipe == p2.pipe)
 isequal(p1::PipeOut, p2::PipeOut) = (p1.pipe == p2.pipe)
 
-in (p::Pipe) = PipeIn(p)
-out(p::Pipe) = PipeOut(p)
-in (p::PipeEnd) = in(p.pipe)
-out(p::PipeEnd) = out(p.pipe)
+pipe_in (p::Pipe) = PipeIn(p)
+pipe_out(p::Pipe) = PipeOut(p)
+pipe_in (p::PipeEnd) = pipe_in(p.pipe)
+pipe_out(p::PipeEnd) = pipe_out(p.pipe)
 
 fd(p::PipeIn)  = p.pipe.in
 fd(p::PipeOut) = p.pipe.out
@@ -115,7 +115,7 @@ end
 function exec(args::String...)
     arr = Array(ByteString, length(args))
     for i = 1:length(args)
-        arr[i] = cstring(args[i])
+        arr[i] = bytestring(args[i])
     end
     exec(arr)
 end
@@ -307,12 +307,12 @@ end
 
 function read_from(ports::Ports)
     merge(cmds(ports))
-    other(connect(ports, in(make_pipe())))
+    other(connect(ports, pipe_in(make_pipe())))
 end
 
 function write_to(ports::Ports)
     merge(cmds(ports))
-    other(connect(ports, out(make_pipe())))
+    other(connect(ports, pipe_out(make_pipe())))
 end
 
 read_from(cmds::Cmds) = read_from(stdout(cmds))
@@ -320,13 +320,13 @@ write_to(cmds::Cmds) = write_to(stdin(cmds))
 
 function (|)(src::Port, dst::Port)
     if has(dst.cmd.pipes, dst.fd)
-        connect(src, in(dst.cmd.pipes[dst.fd]))
+        connect(src, pipe_in(dst.cmd.pipes[dst.fd]))
     elseif has(src.cmd.pipes, src.fd)
-        connect(dst, out(src.cmd.pipes[src.fd]))
+        connect(dst, pipe_out(src.cmd.pipes[src.fd]))
     else
         p = make_pipe()
-        connect(src, in(p))
-        connect(dst, out(p))
+        connect(src, pipe_in(p))
+        connect(dst, pipe_out(p))
     end
     merge(src.cmd & dst.cmd)
 end
@@ -517,11 +517,11 @@ function arg_gen(head)
     if applicable(start,head)
         vals = ByteString[]
         for x in head
-            push(vals,cstring(x))
+            push(vals,string(x))
         end
         return vals
     else
-        return ByteString[cstring(head)]
+        return ByteString[string(head)]
     end
 end
 
@@ -530,7 +530,7 @@ function arg_gen(head, tail...)
     tail = arg_gen(tail...)
     vals = ByteString[]
     for h in head, t in tail
-        push(vals,cstring(strcat(h,t)))
+        push(vals,bytestring(strcat(h,t)))
     end
     vals
 end

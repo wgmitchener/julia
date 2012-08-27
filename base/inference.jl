@@ -27,10 +27,9 @@ end
 inference_stack = EmptyCallStack()
 
 tintersect(a::ANY,b::ANY) = ccall(:jl_type_intersection, Any, (Any,Any), a, b)
-tmatch(a::ANY,b::ANY) = ccall(:jl_type_match, Any, (Any,Any), a, b)
 
-getmethods(f,t) = getmethods(f,t,-1)::Array{Any,1}
-getmethods(f,t,lim) = ccall(:jl_matching_methods, Any, (Any,Any,Int32), f, t, lim)
+methods(f::Union(Function,CompositeKind),t) = methods(f,t,-1)::Array{Any,1}
+methods(f::Union(Function,CompositeKind),t,lim) = ccall(:jl_matching_methods, Any, (Any,Any,Int32), f, t, lim)
 
 typeseq(a,b) = subtype(a,b)&&subtype(b,a)
 
@@ -243,6 +242,9 @@ end
 t_func[tupleref] = (2, 2, tupleref_tfunc)
 
 getfield_tfunc = function (A, s, name)
+    if isType(s)
+        s = typeof(s.parameters[1])
+    end
     if !isa(s,CompositeKind)
         return Any
     end
@@ -263,7 +265,7 @@ getfield_tfunc = function (A, s, name)
     end
 end
 t_func[getfield] = (2, 2, getfield_tfunc)
-t_func[_setfield] = (3, 3, (o, f, v)->v)
+t_func[setfield] = (3, 3, (o, f, v)->v)
 fieldtype_tfunc = function (A, s, name)
     if !isa(s,CompositeKind)
         return Type
@@ -355,7 +357,7 @@ function a2t(a::AbstractVector)
     return tuple(a...)
 end
 
-function isconstantfunc(f, vtypes, sv::StaticVarInfo)
+function _isconstantfunc_part1(f)
     if isa(f,TopNode)
         return _iisconst(f.name) && f.name
     end
@@ -371,12 +373,30 @@ function isconstantfunc(f, vtypes, sv::StaticVarInfo)
             return isbound(M,s) && isconst(M,s) && f
         end
     end
+    return true
+end
+
+function isconstantfunc(f, vtypes, sv::StaticVarInfo)
+    u = _isconstantfunc_part1(f)
+    if !is(u,true); return u; end
     if isa(f,SymbolNode)
         f = f.name
     end
     return isa(f,Symbol) && !has(vtypes,f) && !has(sv.cenv,f) &&
-            _iisconst(f) && _iisbound(f) && f
+        _iisconst(f) && _iisbound(f) && f
 end
+
+function isconstantfunc(f, vars)
+    u = _isconstantfunc_part1(f)
+    if !is(u,true); return u; end
+    if isa(f,SymbolNode)
+        f = f.name
+    end
+    return isa(f,Symbol) && !contains_is(vars,f) &&
+        _iisconst(f) && _iisbound(f) && f
+end
+
+const isconstantref = isconstantfunc
 
 isvatuple(t::Tuple) = (n = length(t); n > 0 && isseqtype(t[n]))
 
@@ -420,7 +440,7 @@ function abstract_call_gf(f, fargs, argtypes, e)
     # function, so we can still know that error() is always None.
     # here I picked 4.
     argtypes = limit_tuple_type(argtypes)
-    applicable = getmethods(f, argtypes, 4)
+    applicable = methods(f, argtypes, 4)
     rettype = None
     if is(applicable,false)
         # this means too many methods matched
@@ -470,7 +490,7 @@ function _jl_invoke_tfunc(f, types, argtypes)
     if is(argtypes,None)
         return None
     end
-    applicable = getmethods(f, types)
+    applicable = methods(f, types)
     if isempty(applicable)
         return Any
     end
@@ -498,7 +518,7 @@ function abstract_call(f, fargs, argtypes, vtypes, sv::StaticVarInfo, e)
                     # apply with known func with known tuple types
                     # can be collapsed to a call to the applied func
                     at = length(aargtypes) > 0 ?
-                         limit_tuple_type(append(aargtypes...)) : ()
+                         limit_tuple_type(apply(tuple,aargtypes...)) : ()
                     return abstract_call(_ieval(af), (), at, vtypes, sv, ())
                 end
             end
@@ -515,6 +535,16 @@ function abstract_call(f, fargs, argtypes, vtypes, sv::StaticVarInfo, e)
         end
         if !is(f,apply) && isa(e,Expr) && (isa(f,Function) || isa(f,IntrinsicFunction))
             e.head = :call1
+        end
+        if is(f,getfield) && length(argtypes)==2 && is(argtypes[1],Module)
+            themod = isconstantref(e.args[2], vtypes, sv)
+            if !is(themod,false) && isa(fargs[2], QuoteNode)
+                themod = _ieval(themod)
+                sym = fargs[2].value
+                if isa(sym,Symbol) && isconst(themod,sym) && isbound(themod,sym)
+                    return abstract_eval_constant(eval(themod, sym))
+                end
+            end
         end
         rt = builtin_tfunction(f, fargs, argtypes)
         #print("=> ", rt, "\n")
@@ -622,9 +652,6 @@ function abstract_eval_constant(x::ANY)
         end
         return Type{x}
     end
-    if isa(x,LambdaStaticData)
-        return Function
-    end
     return typeof(x)
 end
 
@@ -675,6 +702,8 @@ abstract_eval(s::SymbolNode, vtypes, sv::StaticVarInfo) =
     abstract_eval(s.name, vtypes, sv)
 
 abstract_eval(x, vtypes, sv::StaticVarInfo) = abstract_eval_constant(x)
+
+abstract_eval(x::LambdaStaticData, vtypes, sv::StaticVarInfo) = Function
 
 typealias VarTable ObjectIdDict
 
@@ -901,7 +930,7 @@ function typeinf(linfo::LambdaStaticData,atypes::Tuple,sparams::Tuple, def, cop)
     #print("typeinf ", linfo.name, " ", atypes, "\n")
 
     if cop
-        sparams = append(sparams, linfo.sparams)
+        sparams = tuple(sparams..., linfo.sparams...)
         ast = ccall(:jl_prepare_ast, Any, (Any,Any), linfo, sparams)::Expr
     else
         ast = linfo.ast
@@ -911,7 +940,7 @@ function typeinf(linfo::LambdaStaticData,atypes::Tuple,sparams::Tuple, def, cop)
     la = length(args)
     assert(is(ast.head,:lambda), "inference.jl:745")
     locals = (ast.args[2][1])::Array{Any,1}
-    vars = append(args, locals)
+    vars = [args, locals]
     body = (ast.args[3].args)::Array{Any,1}
     n = length(body)
 
@@ -923,8 +952,8 @@ function typeinf(linfo::LambdaStaticData,atypes::Tuple,sparams::Tuple, def, cop)
     rec = false
 
     s = { () for i=1:n }
-    recpts = IntSet(n+1)  # statements that depend recursively on our value
-    W = IntSet(n+1)
+    recpts = IntSet()  # statements that depend recursively on our value
+    W = IntSet()
     # initial set of pc
     add(W,1)
     # initial types
@@ -1086,8 +1115,8 @@ function typeinf(linfo::LambdaStaticData,atypes::Tuple,sparams::Tuple, def, cop)
     fulltree = type_annotate(ast, s, sv, frame.result, vars, args)
     
     if !rec
-        fulltree.args[3] = inlining_pass(fulltree.args[3], vars)
-        tuple_elim_pass(fulltree)
+        fulltree.args[3] = inlining_pass(fulltree.args[3], vars, fulltree)[1]
+        tuple_elim_pass(fulltree, vars)
         linfo.inferred = true
     end
     
@@ -1325,12 +1354,36 @@ function without_linenums(a::Array{Any,1})
     l
 end
 
+# detect some important side-effect-free calls
+function effect_free(e)
+    if isa(e,Symbol) || isa(e,SymbolNode) || isa(e,Number) || isa(e,String) ||
+        isa(e,TopNode) || isa(e,QuoteNode)
+        return true
+    end
+    if isa(e,Expr) && (e.head === :call || e.head === :call1)
+        ea = e.args
+        for a in ea
+            if !effect_free(a)
+                return false
+            end
+        end
+        if isa(ea[1],TopNode)
+            n = ea[1].name
+            if (n === :getfield || n === :tuple || n === :tupleref ||
+                n === :tuplelen || n === :fieldtype)
+                return true
+            end
+        end
+    end
+    return false
+end
+
 # for now, only inline functions whose bodies are of the form "return <expr>"
 # where <expr> doesn't contain any argument more than once.
 # functions with closure environments or varargs are also excluded.
 # static parameters are ok if all the static parameter values are leaf types,
 # meaning they are fully known.
-function inlineable(f, e::Expr, vars)
+function inlineable(f, e::Expr, vars, enclosing_ast)
     if !(isa(f,Function)||isa(f,CompositeKind)||isa(f,IntrinsicFunction))
         return NF
     end
@@ -1342,21 +1395,21 @@ function inlineable(f, e::Expr, vars)
         if isType(atypes[1]) && isleaftype(atypes[1]) &&
             subtype(atypes[2],atypes[1].parameters[1])
             # todo: if T expression has side effects??!
-            return e.args[3]
+            return (e.args[3],())
         end
     end
     if (is(f,apply_type) || is(f,fieldtype)) &&
         isType(e.typ) && isleaftype(e.typ.parameters[1])
-        return e.typ.parameters[1]
+        return (e.typ.parameters[1],())
     end
     if length(atypes)==2 && is(f,unbox) && isa(atypes[2],BitsKind)
-        return e.args[3]
+        return (e.args[3],())
     end
     if isa(f,IntrinsicFunction)
         return NF
     end
 
-    meth = getmethods(f, atypes)
+    meth = methods(f, atypes)
     if length(meth) != 1
         return NF
     end
@@ -1402,36 +1455,41 @@ function inlineable(f, e::Expr, vars)
     args = f_argnames(ast)
     na = length(args)
     if na>0 && is_rest_arg(ast.args[1][na])
-        return NF
+        # construct tuple-forming expression for argument tail
+        vararg = _jl_mk_tuplecall(argexprs[na:end])
+        argexprs = {argexprs[1:(na-1)]..., vararg}
     end
-    # see if each argument occurs only once in the body expression
-    # TODO: make sure side effects aren't skipped if argument doesn't occur
     expr = body[1].args[1]
-    for i=1:length(args)
-        a = args[i]
-        occ = occurs_more(expr, x->is(x,a), 1)
-        if occ > 1
-            aei = argexprs[i]
-            # ok for argument to occur more than once if the actual argument
-            # is a symbol or constant
-            if !isa(aei,Symbol) && !isa(aei,Number) && !isa(aei,SymbolNode)
-                return NF
-            end
-        elseif occ == 0
-            aei = argexprs[i]
-            if is(exprtype(aei),None)
-                # if an argument does not occur in the function and its
-                # actual argument is an error, make sure the error is not
-                # skipped.
-                return NF
-            end
-        end
-    end
+
     # avoid capture if the function has free variables with the same name
     # as our vars
     if occurs_more(expr, x->(contains_is(vars,x)&&!contains_is(args,x)), 0) > 0
         return NF
     end
+
+    stmts = {}
+    # see if each argument occurs only once in the body expression
+    for i=1:length(args)
+        a = args[i]
+        occ = occurs_more(expr, x->is(x,a), 1)
+        if occ != 1
+            aei = argexprs[i]; aeitype = exprtype(aei)
+            # ok for argument to occur more than once if the actual argument
+            # is a symbol or constant
+            if (!isa(aei,Symbol) && !isa(aei,Number) && !isa(aei,SymbolNode) && !isa(aei,String)) || (occ==0 && is(aeitype,None))
+                # introduce variable for this argument
+                if occ > 1
+                    vnew = unique_name(enclosing_ast)
+                    add_variable(enclosing_ast, vnew, aeitype)
+                    push(stmts, Expr(:(=), {vnew, aei}, Any))
+                    argexprs[i] = SymbolNode(vnew,aeitype)
+                elseif !isType(aeitype) && !effect_free(aei)
+                    push(stmts, aei)
+                end
+            end
+        end
+    end
+
     # ok, substitute argument expressions for argument names in the body
     spnames = { sp[i].name for i=1:2:length(sp) }
     expr = astcopy(expr)
@@ -1439,13 +1497,14 @@ function inlineable(f, e::Expr, vars)
     if !is(mfrom, mto)
         expr = resolve_globals(expr, mfrom, mto, args, spnames)
     end
-    return sym_replace(expr, args, spnames, argexprs, spvals)
+    return (sym_replace(expr, args, spnames, argexprs, spvals), stmts)
 end
 
 _jl_tn(sym::Symbol) =
     ccall(:jl_new_struct, Any, (Any,Any...), TopNode, sym, Any)
 
 const _jl_top_tupleref = _jl_tn(:tupleref)
+const _jl_top_tuple = _jl_tn(:tuple)
 
 function _jl_mk_tupleref(texpr, i)
     e = :(($_jl_top_tupleref)($texpr, $i))
@@ -1453,13 +1512,18 @@ function _jl_mk_tupleref(texpr, i)
     e
 end
 
-function inlining_pass(e::Expr, vars)
+function _jl_mk_tuplecall(args)
+    Expr(:call1, {_jl_top_tuple, args...},
+         ntuple(length(args), i->exprtype(args[i])))
+end
+
+function inlining_pass(e::Expr, vars, ast)
     # don't inline first argument of ccall, as this needs to be evaluated
     # by the interpreter and inlining might put in something it can't handle,
     # like another ccall.
     eargs = e.args
     if length(eargs)<1
-        return e
+        return (e,())
     end
     arg1 = eargs[1]
     if is(e.head,:call1) && (is(arg1, :ccall) ||
@@ -1471,10 +1535,34 @@ function inlining_pass(e::Expr, vars)
         i0 = 1
         isccall = false
     end
-    for i=i0:length(eargs)
-        ei = eargs[i]
-        if isa(ei,Expr)
-            eargs[i] = inlining_pass(ei, vars)
+    stmts = {}
+    if e.head === :body
+        i = i0
+        while i <= length(eargs)
+            ei = eargs[i]
+            if isa(ei,Expr)
+                res = inlining_pass(ei, vars, ast)
+                eargs[i] = res[1]
+                if isa(res[2],Array)
+                    sts = res[2]::Array{Any,1}
+                    for j = 1:length(sts)
+                        insert(eargs, i, sts[j])
+                        i += 1
+                    end
+                end
+            end
+            i += 1
+        end
+    else
+        for i=i0:length(eargs)
+            ei = eargs[i]
+            if isa(ei,Expr)
+                res = inlining_pass(ei, vars, ast)
+                eargs[i] = res[1]
+                if isa(res[2],Array)
+                    append!(stmts,res[2]::Array{Any,1})
+                end
+            end
         end
     end
     if isccall
@@ -1509,39 +1597,50 @@ function inlining_pass(e::Expr, vars)
             end
         end
 
-        body = inlineable(f, e, vars)
-        if !is(body,NF)
-            #print("inlining ", e, " => ", body, "\n")
-            return body
+        res = inlineable(f, e, vars, ast)
+        if isa(res,Tuple)
+            if isa(res[2],Array)
+                append!(stmts,res[2])
+            end
+            return (res[1],stmts)
+        elseif !is(res,NF)
+            return (res,stmts)
         end
+
         if is(f,apply)
             na = length(e.args)
             newargs = cell(na-2)
             for i = 3:na
                 aarg = e.args[i]
                 t = exprtype(aarg)
-                if isa(aarg,Expr) && is_top_call(aarg, :tuple)
+                if isa(aarg,Expr) && is_known_call(aarg, tuple, vars)
                     # apply(f,tuple(x,y,...)) => f(x,y,...)
                     newargs[i-2] = aarg.args[2:]
-                elseif isa(t,Tuple) && isleaftype(t)
+                elseif isa(t,Tuple) && !isvatuple(t) && effect_free(aarg)
                     # apply(f,t::(x,y)) => f(t[1],t[2])
                     newargs[i-2] = { _jl_mk_tupleref(aarg,j) for j=1:length(t) }
                 else
                     # not all args expandable
-                    return e
+                    return (e,stmts)
                 end
             end
             e.args = [{e.args[2]}, newargs...]
 
             # now try to inline the simplified call
-            body = inlineable(_ieval(e.args[1]), e, vars)
-            if !is(body,NF)
-                return body
+            res = inlineable(_ieval(e.args[1]), e, vars, ast)
+            if isa(res,Tuple)
+                if isa(res[2],Array)
+                    append!(stmts,res[2])
+                end
+                return (res[1],stmts)
+            elseif !is(res,NF)
+                return (res,stmts)
             end
-            return e
+
+            return (e,stmts)
         end
     end
-    e
+    return (e,stmts)
 end
 
 function add_variable(ast, name, typ)
@@ -1552,8 +1651,15 @@ function add_variable(ast, name, typ)
     push(vinflist, vinf)
 end
 
+const some_names = {:_var0, :_var1, :_var2, :_var3, :_var4, :_var5, :_var6}
+
 function unique_name(ast)
     locllist = ast.args[2][1]::Array{Any,1}
+    for g in some_names
+        if !contains_is(locllist, g)
+            return g
+        end
+    end
     g = gensym()
     while contains_is(locllist, g)
         g = gensym()
@@ -1561,13 +1667,16 @@ function unique_name(ast)
     g
 end
 
-function is_top_call(e::Expr, fname)
-    return is(e.head,:call) && isa(e.args[1],TopNode) &&
-        is(e.args[1].name,fname)
+function is_known_call(e::Expr, func, vars)
+    if !(is(e.head,:call) || is(e.head,:call1))
+        return false
+    end
+    f = isconstantfunc(e.args[1], vars)
+    return isa(f,Symbol) && is(_ieval(f), func)
 end
 
 # eliminate allocation of tuples used to return multiple values
-function tuple_elim_pass(ast::Expr)
+function tuple_elim_pass(ast::Expr, vars)
     body = (ast.args[3].args)::Array{Any,1}
     i = 1
     while i < length(body)-1
@@ -1578,17 +1687,18 @@ function tuple_elim_pass(ast::Expr)
             # look for t = top(tuple)(...)
             if isa(ret,Expr) && is(ret.head,:(=))
                 rhs = ret.args[2]
-                if isa(rhs,Expr) && is_top_call(rhs,:tuple)
+                if isa(rhs,Expr) && is_known_call(rhs,tuple,vars)
                     tup = rhs.args
                     tupname = ret.args[1]
                     nv = length(tup)-1
                     if nv > 0
                         del(body, i)  # remove (multiple_value)
                         del(body, i)  # remove tuple allocation
-                        vals = { unique_name(ast) for j=1:nv }
                         # convert tuple allocation to a series of assignments
                         # to local variables
+                        vals = cell(nv)
                         for j=1:nv
+                            vals[j] = unique_name(ast)
                             tupelt = tup[j+1]
                             tmp = Expr(:(=), {vals[j],tupelt}, Any)
                             add_variable(ast, vals[j], exprtype(tupelt))
@@ -1602,7 +1712,7 @@ function tuple_elim_pass(ast::Expr)
                             if isa(stmt,Expr) && is(stmt.head,:(=))
                                 rhs = stmt.args[2]
                                 if isa(rhs,Expr)
-                                    if is_top_call(rhs,:tupleref) &&
+                                    if is_known_call(rhs,tupleref,vars) &&
                                         isequal(rhs.args[2],tupname)
                                         r = vals[k]
                                         if isa(r,Symbol)
@@ -1612,7 +1722,7 @@ function tuple_elim_pass(ast::Expr)
                                         k += 1
                                     elseif length(rhs.args)>2 &&
                                         isa(rhs.args[3],Expr) &&
-                                        is_top_call(rhs.args[3],:tupleref) &&
+                                        is_known_call(rhs.args[3],tupleref,vars) &&
                                         isequal(rhs.args[3].args[2],tupname)
                                         # assignment with conversion
                                         r = vals[k]
@@ -1637,7 +1747,7 @@ function tuple_elim_pass(ast::Expr)
 end
 
 function finfer(f, types)
-    x = getmethods(f,types)[1]
+    x = methods(f,types)[1]
     (tree, ty) = typeinf(x[3], x[1], x[2])
     if isa(tree,Tuple)
         return ccall(:jl_uncompress_ast, Any, (Any,), tree)
@@ -1645,6 +1755,6 @@ function finfer(f, types)
     tree
 end
 
-#tfunc(f,t) = (getmethods(f,t)[1][3]).tfunc
+#tfunc(f,t) = (methods(f,t)[1][3]).tfunc
 
 ccall(:jl_enable_inference, Void, ())
